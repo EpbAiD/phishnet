@@ -87,7 +87,7 @@ jobs:
               echo "Copying $filename to /tmp..."
               gcloud compute ssh ${{ env.VM_NAME }} \
                 --zone=${{ env.GCP_ZONE }} \
-                --command="sudo cp $file /tmp/$filename && sudo chmod 644 /tmp/$filename"
+                --command="sudo cp \"$file\" \"/tmp/$filename\" && sudo chmod 644 \"/tmp/$filename\""
             fi
           done < dns_files.txt
 
@@ -97,7 +97,7 @@ jobs:
               echo "Copying $filename to /tmp..."
               gcloud compute ssh ${{ env.VM_NAME }} \
                 --zone=${{ env.GCP_ZONE }} \
-                --command="sudo cp $file /tmp/$filename && sudo chmod 644 /tmp/$filename"
+                --command="sudo cp \"$file\" \"/tmp/$filename\" && sudo chmod 644 \"/tmp/$filename\""
             fi
           done < whois_files.txt
 
