@@ -72,13 +72,11 @@ jobs:
           # Get list of timestamped files from the last week
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }} \
             --command="find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
             > dns_files.txt
 
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }} \
             --command="find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
             > whois_files.txt
 
@@ -89,8 +87,7 @@ jobs:
               echo "Downloading $filename..."
               gcloud compute scp ${{ env.VM_NAME }}:$file \
                 vm_data/weekly/$filename \
-                --zone=${{ env.GCP_ZONE }} \
-                --account=${{ env.GCP_ACCOUNT }}
+                --zone=${{ env.GCP_ZONE }}
             fi
           done < dns_files.txt
 
@@ -100,8 +97,7 @@ jobs:
               echo "Downloading $filename..."
               gcloud compute scp ${{ env.VM_NAME }}:$file \
                 vm_data/weekly/$filename \
-                --zone=${{ env.GCP_ZONE }} \
-                --account=${{ env.GCP_ACCOUNT }}
+                --zone=${{ env.GCP_ZONE }}
             fi
           done < whois_files.txt
 
@@ -295,8 +291,8 @@ jobs:
 
       - name: Commit updated models and data to repository
         run: |
-          git config user.name "Eeshan Bhanap"
-          git config user.email "eb3658@columbia.edu"
+          git config user.name "EpbAiD"
+          git config user.email "eeshanpbhanap@gmail.com"
 
           # Add updated datasets
           git add data/phishing_features_complete_dns.csv
