@@ -94,7 +94,7 @@ log ""
 log "Step 3: Pushing URL batch to VM..."
 
 # Create VM directories if they don't exist
-gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" --account="$GCP_ACCOUNT" \
+gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
     --command="mkdir -p ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs" >> "$LOG_FILE" 2>&1 || {
     log_error "Failed to create VM directories (VM may be unreachable)"
     log_info "Skipping VM upload - batch saved locally for manual upload"
@@ -103,7 +103,7 @@ gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" --accou
 
 # Upload batch file to VM
 gcloud compute scp "$OUTPUT_FILE" "${VM_NAME}:${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv" \
-    --zone="$VM_ZONE" --project="$GCP_PROJECT" --account="$GCP_ACCOUNT" >> "$LOG_FILE" 2>&1
+    --zone="$VM_ZONE" --project="$GCP_PROJECT" >> "$LOG_FILE" 2>&1
 
 if [ $? -eq 0 ]; then
     log "✅ Batch uploaded to VM: ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv"
@@ -119,7 +119,7 @@ log ""
 log "Step 4: Checking VM processor status..."
 
 # Check if VM processor is running
-VM_RUNNING=$(gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" --account="$GCP_ACCOUNT" \
+VM_RUNNING=$(gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
     --command="pgrep -f vm_daily_processor || echo 'NOT_RUNNING'" 2>/dev/null)
 
 if [ "$VM_RUNNING" = "NOT_RUNNING" ]; then
