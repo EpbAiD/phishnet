@@ -45,7 +45,6 @@ COPY --from=dependencies /usr/local/bin /usr/local/bin
 # Copy application code
 COPY src/ /app/src/
 COPY models/ /app/models/
-COPY pipeline.py /app/
 
 # Create necessary directories
 RUN mkdir -p /app/data/processed /app/logs
