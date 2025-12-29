@@ -10,10 +10,20 @@
 
 import os
 import json
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, Optional
 import numpy as np
+
+# Optional LLM dependencies (torch/transformers)
+try:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    AutoModelForCausalLM = None
+    AutoTokenizer = None
 
 # ---------------------------------------------------------------
 # Configuration
@@ -40,6 +50,12 @@ def load_explainer_model():
     Uses Qwen2.5-0.5B-Instruct with prompt engineering (no fine-tuning).
     This is called lazily on first use to avoid slowing API startup.
     """
+    if not TORCH_AVAILABLE:
+        raise RuntimeError(
+            "torch and transformers are required for LLM explanations. "
+            "Install with: pip install torch transformers"
+        )
+
     global _model, _tokenizer
 
     if _model is not None and _tokenizer is not None:
@@ -99,6 +115,13 @@ def generate_explanation(
     Returns:
         Human-readable explanation string
     """
+    # Check if LLM dependencies are available
+    if not TORCH_AVAILABLE:
+        return (
+            "LLM-based explanations are not available. "
+            "Install torch and transformers to enable this feature."
+        )
+
     try:
         model, tokenizer = load_explainer_model()
 
