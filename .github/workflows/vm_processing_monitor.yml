@@ -59,12 +59,10 @@ jobs:
             # Get current row counts
             DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --account=${{ env.GCP_ACCOUNT }} \
               --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
 
             WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --account=${{ env.GCP_ACCOUNT }} \
               --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
 
             echo "DNS rows: $DNS_ROWS / $EXPECTED_ROWS"
@@ -81,7 +79,6 @@ jobs:
             # Check if VM processor is still running
             PROCESSOR_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --account=${{ env.GCP_ACCOUNT }} \
               --command="screen -list | grep -c phishnet || echo 0")
 
             if [ "$PROCESSOR_RUNNING" -eq "0" ] && [ "$DNS_ROWS" -lt "$EXPECTED_ROWS" ]; then
@@ -120,12 +117,10 @@ jobs:
           # Get final row counts
           DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }} \
             --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv")
 
           WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }} \
             --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv")
 
           echo "dns_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
@@ -168,13 +163,11 @@ jobs:
 
           gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv \
             vm_data/temp/dns_${TIMESTAMP}.csv \
-            --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }}
+            --zone=${{ env.GCP_ZONE }}
 
           gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv \
             vm_data/temp/whois_${TIMESTAMP}.csv \
-            --zone=${{ env.GCP_ZONE }} \
-            --account=${{ env.GCP_ACCOUNT }}
+            --zone=${{ env.GCP_ZONE }}
 
       - name: Validate data quality
         id: validate
