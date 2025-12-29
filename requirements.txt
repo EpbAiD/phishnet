@@ -23,7 +23,7 @@ shap==0.44.1
 # Feature Extraction
 python-whois==0.8.0
 tldextract==5.1.1
-dnspython==2.5.0
+dnspython==2.0.0
 ipwhois==1.2.0
 
 # Model Persistence
