@@ -72,20 +72,41 @@ jobs:
           # Get list of timestamped files from the last week
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
+            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
             > dns_files.txt
 
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
+            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
             > whois_files.txt
 
-          # Download all files
+          # Copy files to /tmp on VM first (since gcloud scp can't use sudo)
+          while IFS= read -r file; do
+            if [ -n "$file" ]; then
+              filename=$(basename "$file")
+              echo "Copying $filename to /tmp..."
+              gcloud compute ssh ${{ env.VM_NAME }} \
+                --zone=${{ env.GCP_ZONE }} \
+                --command="sudo cp $file /tmp/$filename && sudo chmod 644 /tmp/$filename"
+            fi
+          done < dns_files.txt
+
+          while IFS= read -r file; do
+            if [ -n "$file" ]; then
+              filename=$(basename "$file")
+              echo "Copying $filename to /tmp..."
+              gcloud compute ssh ${{ env.VM_NAME }} \
+                --zone=${{ env.GCP_ZONE }} \
+                --command="sudo cp $file /tmp/$filename && sudo chmod 644 /tmp/$filename"
+            fi
+          done < whois_files.txt
+
+          # Now download all files from /tmp
           while IFS= read -r file; do
             if [ -n "$file" ]; then
               filename=$(basename "$file")
               echo "Downloading $filename..."
-              gcloud compute scp ${{ env.VM_NAME }}:$file \
+              gcloud compute scp ${{ env.VM_NAME }}:/tmp/$filename \
                 vm_data/weekly/$filename \
                 --zone=${{ env.GCP_ZONE }}
             fi
@@ -95,7 +116,7 @@ jobs:
             if [ -n "$file" ]; then
               filename=$(basename "$file")
               echo "Downloading $filename..."
-              gcloud compute scp ${{ env.VM_NAME }}:$file \
+              gcloud compute scp ${{ env.VM_NAME }}:/tmp/$filename \
                 vm_data/weekly/$filename \
                 --zone=${{ env.GCP_ZONE }}
             fi
