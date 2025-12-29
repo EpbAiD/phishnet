@@ -26,18 +26,14 @@ from src.api.predict_utils import _features_dict_to_dataframe
 logger = logging.getLogger(__name__)
 
 # Optimized ensemble weights (from grid search)
-ENSEMBLE_WEIGHTS = {
-    'url': 0.50,
-    'whois': 0.30,
-    'dns': 0.20
-}
+ENSEMBLE_WEIGHTS = {"url": 0.50, "whois": 0.30, "dns": 0.20}
 
 
 async def predict_fast(
     url: str,
     timeout_whois: float = 0.1,  # 100ms
-    timeout_dns: float = 0.1,     # 100ms
-    use_cache: bool = True
+    timeout_dns: float = 0.1,  # 100ms
+    use_cache: bool = True,
 ) -> Tuple[float, float, str, Dict]:
     """
     Fast ensemble prediction with parallel feature extraction.
@@ -61,10 +57,7 @@ async def predict_fast(
 
     # Extract all features in parallel
     url_feats, whois_feats, dns_feats = await extract_all_features_parallel(
-        url,
-        timeout_whois=timeout_whois,
-        timeout_dns=timeout_dns,
-        use_cache=use_cache
+        url, timeout_whois=timeout_whois, timeout_dns=timeout_dns, use_cache=use_cache
     )
 
     # Load models (returns tuple: model, feature_cols, threshold)
@@ -81,7 +74,9 @@ async def predict_fast(
     if url_feats:
         try:
             # Preprocess features
-            url_feats_processed = preprocess_features_for_inference(url_feats, None, None)
+            url_feats_processed = preprocess_features_for_inference(
+                url_feats, None, None
+            )
 
             # Convert to DataFrame with proper encoding
             url_X = _features_dict_to_dataframe(url_feats_processed, url_feature_cols)
@@ -90,12 +85,12 @@ async def predict_fast(
             url_proba = url_model.predict_proba(url_X)[0]
             url_phish_prob = url_proba[1] if len(url_proba) > 1 else url_proba[0]
 
-            weighted_phish_prob += url_phish_prob * ENSEMBLE_WEIGHTS['url']
-            total_weight += ENSEMBLE_WEIGHTS['url']
+            weighted_phish_prob += url_phish_prob * ENSEMBLE_WEIGHTS["url"]
+            total_weight += ENSEMBLE_WEIGHTS["url"]
 
-            predictions['url'] = {
-                'probability': float(url_phish_prob),
-                'weight': ENSEMBLE_WEIGHTS['url']
+            predictions["url"] = {
+                "probability": float(url_phish_prob),
+                "weight": ENSEMBLE_WEIGHTS["url"],
             }
 
             logger.debug(f"URL model prediction: {url_phish_prob:.4f}")
@@ -103,26 +98,33 @@ async def predict_fast(
         except Exception as e:
             logger.error(f"URL model prediction failed: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     # WHOIS prediction (if available)
     if whois_feats:
         try:
             # Preprocess and predict
-            whois_feats_processed = preprocess_features_for_inference({}, None, whois_feats)
+            whois_feats_processed = preprocess_features_for_inference(
+                {}, None, whois_feats
+            )
 
             # Convert to DataFrame with proper encoding
-            whois_X = _features_dict_to_dataframe(whois_feats_processed, whois_feature_cols)
+            whois_X = _features_dict_to_dataframe(
+                whois_feats_processed, whois_feature_cols
+            )
 
             whois_proba = whois_model.predict_proba(whois_X)[0]
-            whois_phish_prob = whois_proba[1] if len(whois_proba) > 1 else whois_proba[0]
+            whois_phish_prob = (
+                whois_proba[1] if len(whois_proba) > 1 else whois_proba[0]
+            )
 
-            weighted_phish_prob += whois_phish_prob * ENSEMBLE_WEIGHTS['whois']
-            total_weight += ENSEMBLE_WEIGHTS['whois']
+            weighted_phish_prob += whois_phish_prob * ENSEMBLE_WEIGHTS["whois"]
+            total_weight += ENSEMBLE_WEIGHTS["whois"]
 
-            predictions['whois'] = {
-                'probability': float(whois_phish_prob),
-                'weight': ENSEMBLE_WEIGHTS['whois']
+            predictions["whois"] = {
+                "probability": float(whois_phish_prob),
+                "weight": ENSEMBLE_WEIGHTS["whois"],
             }
 
             logger.debug(f"WHOIS model prediction: {whois_phish_prob:.4f}")
@@ -130,6 +132,7 @@ async def predict_fast(
         except Exception as e:
             logger.error(f"WHOIS model prediction failed: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     # DNS prediction (if available)
@@ -144,12 +147,12 @@ async def predict_fast(
             dns_proba = dns_model.predict_proba(dns_X)[0]
             dns_phish_prob = dns_proba[1] if len(dns_proba) > 1 else dns_proba[0]
 
-            weighted_phish_prob += dns_phish_prob * ENSEMBLE_WEIGHTS['dns']
-            total_weight += ENSEMBLE_WEIGHTS['dns']
+            weighted_phish_prob += dns_phish_prob * ENSEMBLE_WEIGHTS["dns"]
+            total_weight += ENSEMBLE_WEIGHTS["dns"]
 
-            predictions['dns'] = {
-                'probability': float(dns_phish_prob),
-                'weight': ENSEMBLE_WEIGHTS['dns']
+            predictions["dns"] = {
+                "probability": float(dns_phish_prob),
+                "weight": ENSEMBLE_WEIGHTS["dns"],
             }
 
             logger.debug(f"DNS model prediction: {dns_phish_prob:.4f}")
@@ -157,6 +160,7 @@ async def predict_fast(
         except Exception as e:
             logger.error(f"DNS model prediction failed: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
 
     # Normalize by total weight
@@ -175,18 +179,20 @@ async def predict_fast(
 
     # Build detailed response
     details = {
-        'features_used': {
-            'url': url_feats is not None,
-            'whois': whois_feats is not None,
-            'dns': dns_feats is not None
+        "features_used": {
+            "url": url_feats is not None,
+            "whois": whois_feats is not None,
+            "dns": dns_feats is not None,
         },
-        'predictions': predictions,
-        'ensemble_weight': float(total_weight),
-        'latency_ms': float(total_latency_ms),
-        'cache_enabled': use_cache
+        "predictions": predictions,
+        "ensemble_weight": float(total_weight),
+        "latency_ms": float(total_latency_ms),
+        "cache_enabled": use_cache,
     }
 
-    logger.info(f"🎯 Prediction: {verdict} ({phish_prob:.4f}) in {total_latency_ms:.2f}ms")
+    logger.info(
+        f"🎯 Prediction: {verdict} ({phish_prob:.4f}) in {total_latency_ms:.2f}ms"
+    )
 
     return phish_prob, legit_prob, verdict, details
 

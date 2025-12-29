@@ -15,7 +15,7 @@ def generate_unified_explanation(
     risk_score: float,
     model_type: str,  # "url", "whois", "dns", or "ensemble"
     threshold: float,
-    top_features: Optional[Dict] = None
+    top_features: Optional[Dict] = None,
 ) -> Tuple[str, str, str]:
     """
     Generate unified explanation for any model prediction.
@@ -54,8 +54,10 @@ def generate_unified_explanation(
         predictions = {
             f"{model_type}_prob": float(risk_score),
             "ensemble_prob": float(risk_score),  # Use risk_score as ensemble
-            "verdict": "phishing" if is_phishing else "legit",  # LLM expects "phishing"/"legit"
-            "user_verdict": verdict  # User-facing verdict
+            "verdict": (
+                "phishing" if is_phishing else "legit"
+            ),  # LLM expects "phishing"/"legit"
+            "user_verdict": verdict,  # User-facing verdict
         }
 
         # Extract domain from URL
@@ -64,25 +66,24 @@ def generate_unified_explanation(
 
         # Generate LLM explanation
         explanation = generate_explanation(
-            url=url,
-            domain=domain,
-            predictions=predictions,
-            top_features=top_features
+            url=url, domain=domain, predictions=predictions, top_features=top_features
         )
 
         return explanation, verdict, confidence
 
     except Exception as e:
         print(f"⚠️ LLM explanation failed, using fallback: {e}")
-        return _generate_fallback_explanation(url, risk_score, verdict, confidence, model_type), verdict, confidence
+        return (
+            _generate_fallback_explanation(
+                url, risk_score, verdict, confidence, model_type
+            ),
+            verdict,
+            confidence,
+        )
 
 
 def _generate_fallback_explanation(
-    url: str,
-    risk_score: float,
-    verdict: str,
-    confidence: str,
-    model_type: str
+    url: str, risk_score: float, verdict: str, confidence: str, model_type: str
 ) -> str:
     """
     Generate rule-based fallback explanation when LLM is unavailable.
@@ -109,49 +110,93 @@ def _generate_fallback_explanation(
     domain_lower = domain.lower()
 
     # Check for brand impersonation
-    brand_names = ['paypal', 'amazon', 'google', 'microsoft', 'apple', 'facebook', 'netflix', 'bank', 'ebay']
-    subdomain_parts = domain.split('.')[:-2] if domain.count('.') >= 2 else []
-    has_brand_in_subdomain = any(brand in '-'.join(subdomain_parts).lower() for brand in brand_names)
+    brand_names = [
+        "paypal",
+        "amazon",
+        "google",
+        "microsoft",
+        "apple",
+        "facebook",
+        "netflix",
+        "bank",
+        "ebay",
+    ]
+    subdomain_parts = domain.split(".")[:-2] if domain.count(".") >= 2 else []
+    has_brand_in_subdomain = any(
+        brand in "-".join(subdomain_parts).lower() for brand in brand_names
+    )
 
     if has_brand_in_subdomain and verdict == "suspicious":
-        brand_found = next((brand for brand in brand_names if brand in domain_lower), "known brand")
-        red_flags.append(f"the URL contains '{brand_found}' but isn't the official {brand_found.title()} website")
+        brand_found = next(
+            (brand for brand in brand_names if brand in domain_lower), "known brand"
+        )
+        red_flags.append(
+            f"the URL contains '{brand_found}' but isn't the official {brand_found.title()} website"
+        )
 
     # Check TLD
-    tld = domain.split('.')[-1]
-    suspicious_tlds = ['xyz', 'top', 'tk', 'ml', 'ga', 'cf', 'gq', 'work', 'click', 'link']
+    tld = domain.split(".")[-1]
+    suspicious_tlds = [
+        "xyz",
+        "top",
+        "tk",
+        "ml",
+        "ga",
+        "cf",
+        "gq",
+        "work",
+        "click",
+        "link",
+    ]
     if tld in suspicious_tlds:
         red_flags.append(f"it uses a '.{tld}' domain extension often used by scammers")
-    elif tld in ['com', 'org', 'net', 'edu', 'gov']:
+    elif tld in ["com", "org", "net", "edu", "gov"]:
         trust_signals.append(f"it uses a standard '.{tld}' domain extension")
 
     # Check domain length
     if len(domain) > 30:
-        red_flags.append(f"the domain name is unusually long ({len(domain)} characters)")
+        red_flags.append(
+            f"the domain name is unusually long ({len(domain)} characters)"
+        )
     elif len(domain) < 15 and verdict == "safe":
         trust_signals.append("the domain name is concise and straightforward")
 
     # Check hyphens
-    hyphen_count = domain.count('-')
+    hyphen_count = domain.count("-")
     if hyphen_count >= 2:
-        red_flags.append(f"the domain has multiple hyphens ({hyphen_count}), which is uncommon for legitimate sites")
+        red_flags.append(
+            f"the domain has multiple hyphens ({hyphen_count}), which is uncommon for legitimate sites"
+        )
     elif hyphen_count == 0 and verdict == "safe":
         trust_signals.append("the domain doesn't use suspicious hyphens")
 
     # Check for IP address
-    if parsed.hostname and parsed.hostname.replace('.', '').isdigit():
+    if parsed.hostname and parsed.hostname.replace(".", "").isdigit():
         red_flags.append("it uses a raw IP address instead of a proper domain name")
 
     # Check for HTTPS
-    if parsed.scheme == 'https':
+    if parsed.scheme == "https":
         trust_signals.append("it uses secure HTTPS encryption")
-    elif parsed.scheme == 'http':
+    elif parsed.scheme == "http":
         red_flags.append("it doesn't use secure HTTPS encryption")
 
     # Check for suspicious patterns
-    suspicious_keywords = ['verify', 'secure', 'account', 'update', 'confirm', 'login', 'signin']
-    if any(kw in domain_lower for kw in suspicious_keywords) and verdict == "suspicious":
-        red_flags.append("the domain uses suspicious keywords often seen in phishing attempts")
+    suspicious_keywords = [
+        "verify",
+        "secure",
+        "account",
+        "update",
+        "confirm",
+        "login",
+        "signin",
+    ]
+    if (
+        any(kw in domain_lower for kw in suspicious_keywords)
+        and verdict == "suspicious"
+    ):
+        red_flags.append(
+            "the domain uses suspicious keywords often seen in phishing attempts"
+        )
 
     # Build explanation
     if verdict == "suspicious":
@@ -167,7 +212,9 @@ def _generate_fallback_explanation(
 
         confidence_text = f" (confidence: {confidence})" if confidence != "high" else ""
 
-        explanation = f"{emoji} This website is {status}{confidence_text}. {details} {action}"
+        explanation = (
+            f"{emoji} This website is {status}{confidence_text}. {details} {action}"
+        )
 
     else:  # safe
         emoji = "✅"
@@ -191,10 +238,8 @@ def _generate_fallback_explanation(
 # Feature extraction wrapper for explanations
 # ===============================================================
 
-def extract_features_for_explanation(
-    url: str,
-    model_type: str
-) -> Optional[Dict]:
+
+def extract_features_for_explanation(url: str, model_type: str) -> Optional[Dict]:
     """
     Extract SHAP features for explanation generation.
 
@@ -208,7 +253,11 @@ def extract_features_for_explanation(
     try:
         from src.api.shap_explainer_realtime import extract_shap_features_realtime
         from src.api.predict_utils import _features_dict_to_dataframe
-        from src.api.model_loader import load_url_model, load_whois_model, load_dns_model
+        from src.api.model_loader import (
+            load_url_model,
+            load_whois_model,
+            load_dns_model,
+        )
         from src.features.url_features import extract_single_url_features
         from src.features.dns_ipwhois import extract_single_domain_features
         from src.features.whois import extract_single_whois_features
@@ -236,7 +285,9 @@ def extract_features_for_explanation(
                 model = model["model"]
 
             whois_feats = extract_single_whois_features(domain, live_lookup=True)
-            features = preprocess_features_for_inference(url_features={}, whois_features=whois_feats)
+            features = preprocess_features_for_inference(
+                url_features={}, whois_features=whois_feats
+            )
             X = _features_dict_to_dataframe(features, cols)
 
             top_features = extract_shap_features_realtime(model, X, "whois", top_n=5)
@@ -248,7 +299,9 @@ def extract_features_for_explanation(
                 model = model["model"]
 
             dns_feats = extract_single_domain_features(url)
-            features = preprocess_features_for_inference(url_features={}, dns_features=dns_feats)
+            features = preprocess_features_for_inference(
+                url_features={}, dns_features=dns_feats
+            )
             X = _features_dict_to_dataframe(features, cols)
 
             top_features = extract_shap_features_realtime(model, X, "dns", top_n=5)

@@ -15,8 +15,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.ensemble import (
-    RandomForestClassifier, ExtraTreesClassifier,
-    GradientBoostingClassifier, HistGradientBoostingClassifier
+    RandomForestClassifier,
+    ExtraTreesClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
 )
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.svm import LinearSVC, SVC
@@ -29,12 +31,14 @@ from lightgbm import LGBMClassifier
 # Optional families ------------------------------------------------------------
 try:
     from catboost import CatBoostClassifier
+
     CATBOOST = True
 except Exception:
     CATBOOST = False
 
 try:
     from imblearn.ensemble import BalancedRandomForestClassifier, EasyEnsembleClassifier
+
     IMB = True
 except Exception:
     IMB = False
@@ -44,6 +48,7 @@ except Exception:
 # Helpers to build individual classifiers
 # =============================================================================
 
+
 def _logreg_elasticnet():
     return LogisticRegression(
         penalty="elasticnet",
@@ -52,8 +57,9 @@ def _logreg_elasticnet():
         max_iter=4000,
         class_weight="balanced",
         n_jobs=None,
-        random_state=42
+        random_state=42,
     )
+
 
 def _logreg_l2():
     return LogisticRegression(
@@ -62,25 +68,25 @@ def _logreg_l2():
         max_iter=4000,
         class_weight="balanced",
         n_jobs=None,
-        random_state=42
+        random_state=42,
     )
+
 
 def _svm_linear_calibrated():
     base = LinearSVC(class_weight="balanced", random_state=42)
     return CalibratedClassifierCV(base, method="sigmoid", cv=3)
 
+
 def _svm_rbf():
     return SVC(
-        C=2.0, gamma="scale",
-        class_weight="balanced",
-        probability=True,
-        random_state=42
+        C=2.0, gamma="scale", class_weight="balanced", probability=True, random_state=42
     )
 
 
 # =============================================================================
 # Master Factory Function
 # =============================================================================
+
 
 def get_models_for_dataset(
     dataset: str,
@@ -108,83 +114,104 @@ def get_models_for_dataset(
 
     models = {
         # Linear family ---------------------------------------------------------
-        "logreg_elasticnet": Pipeline([
-            ("scaler", StandardScaler(with_mean=False)),
-            ("clf", _logreg_elasticnet())
-        ]),
-        "logreg_l2": Pipeline([
-            ("scaler", StandardScaler(with_mean=False)),
-            ("clf", _logreg_l2())
-        ]),
-        "sgd_log": Pipeline([
-            ("scaler", StandardScaler(with_mean=False)),
-            ("clf", SGDClassifier(
-                loss="log_loss",
-                class_weight="balanced",
-                max_iter=5000,
-                tol=1e-3,
-                random_state=42,
-            ))
-        ]),
-
+        "logreg_elasticnet": Pipeline(
+            [("scaler", StandardScaler(with_mean=False)), ("clf", _logreg_elasticnet())]
+        ),
+        "logreg_l2": Pipeline(
+            [("scaler", StandardScaler(with_mean=False)), ("clf", _logreg_l2())]
+        ),
+        "sgd_log": Pipeline(
+            [
+                ("scaler", StandardScaler(with_mean=False)),
+                (
+                    "clf",
+                    SGDClassifier(
+                        loss="log_loss",
+                        class_weight="balanced",
+                        max_iter=5000,
+                        tol=1e-3,
+                        random_state=42,
+                    ),
+                ),
+            ]
+        ),
         # Trees / Ensembles -----------------------------------------------------
-        "rf":         RandomForestClassifier(n_estimators=400, class_weight="balanced", n_jobs=-1, random_state=42),
-        "extratrees": ExtraTreesClassifier(n_estimators=500, n_jobs=-1, random_state=42),
-        "gb":         GradientBoostingClassifier(random_state=42),
-        "histgb":     HistGradientBoostingClassifier(learning_rate=0.08, random_state=42),
-
+        "rf": RandomForestClassifier(
+            n_estimators=400, class_weight="balanced", n_jobs=-1, random_state=42
+        ),
+        "extratrees": ExtraTreesClassifier(
+            n_estimators=500, n_jobs=-1, random_state=42
+        ),
+        "gb": GradientBoostingClassifier(random_state=42),
+        "histgb": HistGradientBoostingClassifier(learning_rate=0.08, random_state=42),
         # Gradient Boosting (industry strong) ----------------------------------
         "xgb": XGBClassifier(
-            n_estimators=800, max_depth=6, learning_rate=0.07,
-            subsample=0.9, colsample_bytree=0.9,
+            n_estimators=800,
+            max_depth=6,
+            learning_rate=0.07,
+            subsample=0.9,
+            colsample_bytree=0.9,
             reg_lambda=1.0,
             eval_metric="logloss",
             use_label_encoder=False,
             random_state=42,
             n_jobs=-1,
         ),
-
         "lgbm": LGBMClassifier(
-            n_estimators=800, num_leaves=48, learning_rate=0.05,
-            subsample=0.9, colsample_bytree=0.9,
+            n_estimators=800,
+            num_leaves=48,
+            learning_rate=0.05,
+            subsample=0.9,
+            colsample_bytree=0.9,
             class_weight="balanced",
             random_state=42,
         ),
-
         # Baselines -------------------------------------------------------------
-        "knn": Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", KNeighborsClassifier(n_neighbors=31))
-        ]),
+        "knn": Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", KNeighborsClassifier(n_neighbors=31)),
+            ]
+        ),
         "cnb": ComplementNB(),
-
         # Neural Networks -------------------------------------------------------
-        "mlp": Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", MLPClassifier(
-                hidden_layer_sizes=(100, 50),
-                activation='relu',
-                solver='adam',
-                alpha=0.0001,
-                batch_size='auto',
-                learning_rate='adaptive',
-                max_iter=500,
-                random_state=42,
-                early_stopping=True,
-                validation_fraction=0.1
-            ))
-        ]),
+        "mlp": Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                (
+                    "clf",
+                    MLPClassifier(
+                        hidden_layer_sizes=(100, 50),
+                        activation="relu",
+                        solver="adam",
+                        alpha=0.0001,
+                        batch_size="auto",
+                        learning_rate="adaptive",
+                        max_iter=500,
+                        random_state=42,
+                        early_stopping=True,
+                        validation_fraction=0.1,
+                    ),
+                ),
+            ]
+        ),
     }
 
     # Optional IMBENS models ---------------------------------------------------
     if IMB:
-        models["brf"] = BalancedRandomForestClassifier(n_estimators=400, random_state=42, n_jobs=-1)
-        models["easy_ensemble"] = EasyEnsembleClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+        models["brf"] = BalancedRandomForestClassifier(
+            n_estimators=400, random_state=42, n_jobs=-1
+        )
+        models["easy_ensemble"] = EasyEnsembleClassifier(
+            n_estimators=50, random_state=42, n_jobs=-1
+        )
 
     # Optional CatBoost --------------------------------------------------------
     if CATBOOST:
         models["catboost"] = CatBoostClassifier(
-            iterations=800, depth=6, learning_rate=0.07,
+            iterations=800,
+            depth=6,
+            learning_rate=0.07,
             verbose=False,
             auto_class_weights="Balanced",
             random_state=42,

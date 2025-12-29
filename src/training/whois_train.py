@@ -48,17 +48,12 @@ def collapse_binary_labels(df: pd.DataFrame) -> pd.DataFrame:
     # Legacy: convert string labels (if any remain)
     df["label"] = df["label"].astype(str).str.lower().str.strip()
 
-    df["label"] = df["label"].replace({
-        "legitimate": "legit",
-        "benign": "legit",
-        "safe": "legit",
-        "0": "legit"
-    })
-    df["label"] = df["label"].replace({
-        "phish": "phishing",
-        "malicious": "phishing",
-        "1": "phishing"
-    })
+    df["label"] = df["label"].replace(
+        {"legitimate": "legit", "benign": "legit", "safe": "legit", "0": "legit"}
+    )
+    df["label"] = df["label"].replace(
+        {"phish": "phishing", "malicious": "phishing", "1": "phishing"}
+    )
 
     # enforce binary only
     df = df[df["label"].isin(["legit", "phishing"])].copy()
@@ -134,15 +129,16 @@ def train_all_whois_models(subset=None):
     df_main = collapse_binary_labels(pd.read_csv(DATA_MAIN))
     df_imp = collapse_binary_labels(pd.read_csv(DATA_IMPUTED))
 
-    assert set(df_main.columns) == set(df_imp.columns), "❌ Column mismatch between WHOIS datasets!"
+    assert set(df_main.columns) == set(
+        df_imp.columns
+    ), "❌ Column mismatch between WHOIS datasets!"
 
-    y_binary = {
-        "legit": 0,
-        "phishing": 1
-    }
+    y_binary = {"legit": 0, "phishing": 1}
 
     n = len(df_main)
-    all_models = get_models_for_dataset("whois", n_rows=n, allow_heavy=True, subset=subset)
+    all_models = get_models_for_dataset(
+        "whois", n_rows=n, allow_heavy=True, subset=subset
+    )
     models = all_models
 
     print(f"\n🔐 Training WHOIS models → {list(models.keys())}")
@@ -157,7 +153,7 @@ def train_all_whois_models(subset=None):
 
         print(f"\n🚀 WHOIS: {name} → using {version}")
 
-        X = df.drop(columns=["url", "label","bucket"], errors="ignore")
+        X = df.drop(columns=["url", "label", "bucket"], errors="ignore")
         keep_nan_flag = (version == "native") and (not needs_imputation(name))
         X = safe_factorize(X, keep_nan=keep_nan_flag)
 
@@ -193,7 +189,9 @@ def train_all_whois_models(subset=None):
         model.fit(X_full, y)
         joblib.dump(model, f"{MODELDIR}/whois_{name}.pkl")
 
-        print(f"💾 saved whois_{name}.pkl | ROC={mean_stats['roc_auc']:.4f} | F1={mean_stats['phish_f1']:.4f}")
+        print(
+            f"💾 saved whois_{name}.pkl | ROC={mean_stats['roc_auc']:.4f} | F1={mean_stats['phish_f1']:.4f}"
+        )
 
     out = pd.DataFrame(results).sort_values("roc_auc", ascending=False)
     out.to_csv(f"{ANADIR}/whois_cv_results.csv", index=False)
@@ -208,6 +206,7 @@ if __name__ == "__main__":
 
     # CLEANUP: Remove old WHOIS models before training
     import glob
+
     old_models = glob.glob(f"{MODELDIR}/whois_*.pkl")
     if old_models:
         print(f"🗑️  Removing {len(old_models)} old WHOIS models...")

@@ -7,6 +7,7 @@
 # - /predict/url : takes URL, returns P(phishing) + label
 # ===============================================================
 import sys, os
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from fastapi import FastAPI
@@ -14,13 +15,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 
 from src.api.schemas import (
-    URLPredictRequest, URLPredictResponse,
-    WHOISPredictRequest, WHOISPredictResponse,
-    DNSPredictRequest, DNSPredictResponse,
-    EnsemblePredictRequest, EnsemblePredictResponse,
-    ExplainRequest, ExplainResponse
+    URLPredictRequest,
+    URLPredictResponse,
+    WHOISPredictRequest,
+    WHOISPredictResponse,
+    DNSPredictRequest,
+    DNSPredictResponse,
+    EnsemblePredictRequest,
+    EnsemblePredictResponse,
+    ExplainRequest,
+    ExplainResponse,
 )
-from src.api.predict_utils import predict_url_risk, predict_whois_risk, predict_dns_risk, predict_ensemble_risk
+from src.api.predict_utils import (
+    predict_url_risk,
+    predict_whois_risk,
+    predict_dns_risk,
+    predict_ensemble_risk,
+)
 from src.api.model_loader import load_url_model, load_whois_model, load_dns_model
 from src.api.llm_explainer import generate_explanation
 import time
@@ -39,6 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
 
 # ---------------- Normalize Incoming URLs ------------------
 def normalize_input_url(raw_url: str) -> str:
@@ -102,7 +114,10 @@ def predict_url(request: URLPredictRequest):
     is_phishing = prob >= threshold
 
     # Generate LLM explanation (REQUIRED for trust-building)
-    from src.api.unified_explainer import generate_unified_explanation, extract_features_for_explanation
+    from src.api.unified_explainer import (
+        generate_unified_explanation,
+        extract_features_for_explanation,
+    )
 
     # Extract SHAP features for evidence-based explanation
     top_features = extract_features_for_explanation(url, model_type="url")
@@ -113,7 +128,7 @@ def predict_url(request: URLPredictRequest):
         risk_score=prob,
         model_type="url",
         threshold=threshold,
-        top_features=top_features
+        top_features=top_features,
     )
 
     total_latency_ms = (time.time() - t0) * 1000
@@ -143,7 +158,10 @@ def predict_whois(request: WHOISPredictRequest):
     is_phishing = prob >= threshold
 
     # Generate LLM explanation (REQUIRED for trust-building)
-    from src.api.unified_explainer import generate_unified_explanation, extract_features_for_explanation
+    from src.api.unified_explainer import (
+        generate_unified_explanation,
+        extract_features_for_explanation,
+    )
 
     # Extract SHAP features for evidence-based explanation
     top_features = extract_features_for_explanation(url, model_type="whois")
@@ -154,7 +172,7 @@ def predict_whois(request: WHOISPredictRequest):
         risk_score=prob,
         model_type="whois",
         threshold=threshold,
-        top_features=top_features
+        top_features=top_features,
     )
 
     total_latency_ms = (time.time() - t0) * 1000
@@ -184,7 +202,10 @@ def predict_dns(request: DNSPredictRequest):
     is_phishing = prob >= threshold
 
     # Generate LLM explanation (REQUIRED for trust-building)
-    from src.api.unified_explainer import generate_unified_explanation, extract_features_for_explanation
+    from src.api.unified_explainer import (
+        generate_unified_explanation,
+        extract_features_for_explanation,
+    )
 
     # Extract SHAP features for evidence-based explanation
     top_features = extract_features_for_explanation(url, model_type="dns")
@@ -195,7 +216,7 @@ def predict_dns(request: DNSPredictRequest):
         risk_score=prob,
         model_type="dns",
         threshold=threshold,
-        top_features=top_features
+        top_features=top_features,
     )
 
     total_latency_ms = (time.time() - t0) * 1000
@@ -228,7 +249,10 @@ def predict_ensemble(request: EnsemblePredictRequest):
 
     # Generate LLM explanation (REQUIRED for trust-building)
     # For ensemble, we extract features from all three models for comprehensive explanation
-    from src.api.unified_explainer import generate_unified_explanation, extract_features_for_explanation
+    from src.api.unified_explainer import (
+        generate_unified_explanation,
+        extract_features_for_explanation,
+    )
 
     # Extract SHAP features from URL model (primary signal)
     # For ensemble, we could extract from all models but URL is the strongest signal
@@ -240,7 +264,7 @@ def predict_ensemble(request: EnsemblePredictRequest):
         risk_score=prob,
         model_type="ensemble",
         threshold=threshold,
-        top_features=top_features
+        top_features=top_features,
     )
 
     total_latency_ms = (time.time() - t0) * 1000
@@ -299,11 +323,13 @@ def explain_prediction(request: ExplainRequest):
     # Prepare predictions dict
     predictions = {
         "url_prob": float(url_prob) if not np.isnan(url_prob) else None,
-        "dns_prob": float(dns_prob) if dns_prob is not None and not np.isnan(dns_prob) else None,  # DNS disabled (using VM API)
+        "dns_prob": (
+            float(dns_prob) if dns_prob is not None and not np.isnan(dns_prob) else None
+        ),  # DNS disabled (using VM API)
         "whois_prob": float(whois_prob) if not np.isnan(whois_prob) else None,
         "ensemble_prob": float(ensemble_prob_val),
         "verdict": verdict,  # Technical verdict for internal use
-        "user_verdict": user_friendly_verdict  # User-friendly verdict for display
+        "user_verdict": user_friendly_verdict,  # User-friendly verdict for display
     }
 
     # Extract per-request SHAP contributions for evidence-based explanations
@@ -338,12 +364,15 @@ def explain_prediction(request: ExplainRequest):
                 features = preprocess_features_for_inference(url_features=url_feats)
                 X = _features_dict_to_dataframe(features, url_cols)
 
-                url_important = extract_shap_features_realtime(url_model_obj, X, "url", top_n=5)
+                url_important = extract_shap_features_realtime(
+                    url_model_obj, X, "url", top_n=5
+                )
                 shap_features["url"] = url_important
                 top_features_for_llm["url"] = url_important
             except Exception as e:
                 print(f"⚠️ URL SHAP extraction failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 shap_features["url"] = []
                 top_features_for_llm["url"] = []
@@ -395,15 +424,20 @@ def explain_prediction(request: ExplainRequest):
                 whof = extract_single_whois_features(domain, live_lookup=True)
 
                 # Use SAME inference pipeline as predict_utils.py
-                features = preprocess_features_for_inference(url_features={}, whois_features=whof)
+                features = preprocess_features_for_inference(
+                    url_features={}, whois_features=whof
+                )
                 X = _features_dict_to_dataframe(features, whois_cols)
 
-                whois_important = extract_shap_features_realtime(whois_model_obj, X, "whois", top_n=5)
+                whois_important = extract_shap_features_realtime(
+                    whois_model_obj, X, "whois", top_n=5
+                )
                 shap_features["whois"] = whois_important
                 top_features_for_llm["whois"] = whois_important
             except Exception as e:
                 print(f"⚠️ WHOIS SHAP extraction failed: {e}")
                 import traceback
+
                 traceback.print_exc()
                 shap_features["whois"] = []
                 top_features_for_llm["whois"] = []
@@ -421,22 +455,27 @@ def explain_prediction(request: ExplainRequest):
             url=url,
             domain=domain,
             predictions=predictions,
-            top_features=top_features_for_llm
+            top_features=top_features_for_llm,
         )
         layman_explanation = explanations["layman"]
         technical_explanation = explanations["technical"]
     except Exception as e:
         print(f"⚠️ Dual explanation generation failed, using fallback: {e}")
         import traceback
+
         traceback.print_exc()
 
         # Fallback to simple explanations
         if verdict == "phishing":
             layman_explanation = f"⚠️ This website is likely a phishing attempt ({ensemble_prob_val*100:.1f}% risk). Do not enter any personal information."
-            technical_explanation = f"Ensemble score: {ensemble_prob_val:.4f} (threshold: {threshold})"
+            technical_explanation = (
+                f"Ensemble score: {ensemble_prob_val:.4f} (threshold: {threshold})"
+            )
         else:
             layman_explanation = f"✅ This website appears legitimate ({(1-ensemble_prob_val)*100:.1f}% confidence). Exercise normal caution."
-            technical_explanation = f"Ensemble score: {ensemble_prob_val:.4f} (threshold: {threshold})"
+            technical_explanation = (
+                f"Ensemble score: {ensemble_prob_val:.4f} (threshold: {threshold})"
+            )
 
     total_latency_ms = (time.time() - t0) * 1000
 
@@ -448,5 +487,5 @@ def explain_prediction(request: ExplainRequest):
         verdict=verdict,
         confidence=confidence,
         latency_ms=total_latency_ms,
-        shap_features=shap_features
+        shap_features=shap_features,
     )

@@ -54,15 +54,15 @@ class URLValidator:
     MIN_URL_LENGTH = 7  # http://a
 
     # Allowed URL schemes
-    ALLOWED_SCHEMES = {'http', 'https', 'ftp'}
+    ALLOWED_SCHEMES = {"http", "https", "ftp"}
 
     # Blocked patterns (potential injection attempts)
     BLOCKED_PATTERNS = [
-        r'<script',
-        r'javascript:',
-        r'data:',
-        r'vbscript:',
-        r'file://',
+        r"<script",
+        r"javascript:",
+        r"data:",
+        r"vbscript:",
+        r"file://",
     ]
 
     @classmethod
@@ -89,9 +89,12 @@ class URLValidator:
         if len(url) > cls.MAX_URL_LENGTH:
             logger.warning(
                 "URL validation failed: too long",
-                extra={"url_length": len(url), "max_length": cls.MAX_URL_LENGTH}
+                extra={"url_length": len(url), "max_length": cls.MAX_URL_LENGTH},
             )
-            return False, f"URL exceeds maximum length of {cls.MAX_URL_LENGTH} characters"
+            return (
+                False,
+                f"URL exceeds maximum length of {cls.MAX_URL_LENGTH} characters",
+            )
 
         if len(url) < cls.MIN_URL_LENGTH:
             return False, f"URL too short (minimum {cls.MIN_URL_LENGTH} characters)"
@@ -102,7 +105,7 @@ class URLValidator:
             if re.search(pattern, url_lower, re.IGNORECASE):
                 logger.warning(
                     "URL validation failed: blocked pattern detected",
-                    extra={"url": url, "pattern": pattern}
+                    extra={"url": url, "pattern": pattern},
                 )
                 return False, f"URL contains blocked pattern: {pattern}"
 
@@ -139,10 +142,10 @@ class URLValidator:
         url = url.strip()
 
         # Remove null bytes
-        url = url.replace('\x00', '')
+        url = url.replace("\x00", "")
 
         # Normalize whitespace
-        url = ' '.join(url.split())
+        url = " ".join(url.split())
 
         return url
 
@@ -191,14 +194,13 @@ async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
         logger.error("API_KEY not configured in environment")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="API key validation not configured"
+            detail="API key validation not configured",
         )
 
     if api_key != valid_api_key:
         logger.warning("Invalid API key attempt", extra={"api_key_prefix": api_key[:8]})
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid API key"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key"
         )
 
     logger.info("API key validated successfully")
@@ -235,8 +237,7 @@ def validate_url_request(url: str) -> str:
 
     if not is_valid:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message
+            status_code=status.HTTP_400_BAD_REQUEST, detail=error_message
         )
 
     return url
@@ -254,13 +255,10 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     """
     logger.warning(
         "Rate limit exceeded",
-        extra={
-            "client_ip": get_remote_address(request),
-            "path": request.url.path
-        }
+        extra={"client_ip": get_remote_address(request), "path": request.url.path},
     )
 
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        detail=f"Rate limit exceeded: {exc.detail}"
+        detail=f"Rate limit exceeded: {exc.detail}",
     )

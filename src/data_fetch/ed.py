@@ -17,6 +17,7 @@ os.makedirs("data/processed", exist_ok=True)
 print(f"[INFO] Loading: {INP}")
 df = pd.read_csv(INP)
 
+
 def extract(url):
     try:
         t = tldextract.extract(url)
@@ -26,8 +27,9 @@ def extract(url):
     except:
         return None
 
-df['domain'] = df['url'].astype(str).apply(extract)
-df = df.dropna(subset=['domain']).drop_duplicates(subset=['domain'])
 
-df[['domain']].to_csv(OUT, index=False)
+df["domain"] = df["url"].astype(str).apply(extract)
+df = df.dropna(subset=["domain"]).drop_duplicates(subset=["domain"])
+
+df[["domain"]].to_csv(OUT, index=False)
 print(f"✅ Saved: {OUT} ({df.shape[0]} unique domains)")

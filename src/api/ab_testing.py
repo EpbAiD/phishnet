@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 # Variant Performance Tracker
 # ============================================
 
+
 class VariantMetrics:
     """Tracks performance metrics for a single variant"""
 
@@ -58,10 +59,7 @@ class VariantMetrics:
         self.start_time = datetime.now()
 
     def record_prediction(
-        self,
-        prediction: int,
-        latency_ms: float,
-        actual_label: Optional[int] = None
+        self, prediction: int, latency_ms: float, actual_label: Optional[int] = None
     ):
         """Record a prediction"""
         self.requests += 1
@@ -78,7 +76,12 @@ class VariantMetrics:
 
     def get_metrics(self) -> Dict:
         """Calculate current metrics"""
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        from sklearn.metrics import (
+            accuracy_score,
+            precision_score,
+            recall_score,
+            f1_score,
+        )
 
         metrics = {
             "variant_id": self.variant_id,
@@ -86,25 +89,34 @@ class VariantMetrics:
             "errors": self.errors,
             "error_rate": self.errors / self.requests if self.requests > 0 else 0,
             "runtime_hours": (datetime.now() - self.start_time).total_seconds() / 3600,
-            "requests_per_hour": self.requests / ((datetime.now() - self.start_time).total_seconds() / 3600) if self.requests > 0 else 0
+            "requests_per_hour": (
+                self.requests
+                / ((datetime.now() - self.start_time).total_seconds() / 3600)
+                if self.requests > 0
+                else 0
+            ),
         }
 
         # Latency stats
         if self.latencies:
-            metrics.update({
-                "latency_avg_ms": float(np.mean(self.latencies)),
-                "latency_p50_ms": float(np.percentile(self.latencies, 50)),
-                "latency_p95_ms": float(np.percentile(self.latencies, 95)),
-                "latency_p99_ms": float(np.percentile(self.latencies, 99)),
-                "latency_max_ms": float(np.max(self.latencies))
-            })
+            metrics.update(
+                {
+                    "latency_avg_ms": float(np.mean(self.latencies)),
+                    "latency_p50_ms": float(np.percentile(self.latencies, 50)),
+                    "latency_p95_ms": float(np.percentile(self.latencies, 95)),
+                    "latency_p99_ms": float(np.percentile(self.latencies, 99)),
+                    "latency_max_ms": float(np.max(self.latencies)),
+                }
+            )
 
         # Accuracy stats (if ground truth available)
         if len(self.actuals) > 0 and len(self.predictions) >= len(self.actuals):
-            preds = self.predictions[:len(self.actuals)]
+            preds = self.predictions[: len(self.actuals)]
             try:
                 accuracy = accuracy_score(self.actuals, preds)
-                precision = precision_score(self.actuals, preds, pos_label=1, zero_division=0)
+                precision = precision_score(
+                    self.actuals, preds, pos_label=1, zero_division=0
+                )
                 recall = recall_score(self.actuals, preds, pos_label=1, zero_division=0)
                 f1 = f1_score(self.actuals, preds, pos_label=1, zero_division=0)
 
@@ -113,14 +125,16 @@ class VariantMetrics:
                 tn = sum(1 for a, p in zip(self.actuals, preds) if a == 0 and p == 0)
                 fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
 
-                metrics.update({
-                    "accuracy": float(accuracy),
-                    "precision": float(precision),
-                    "recall": float(recall),
-                    "f1_score": float(f1),
-                    "fpr": float(fpr),
-                    "samples_with_ground_truth": len(self.actuals)
-                })
+                metrics.update(
+                    {
+                        "accuracy": float(accuracy),
+                        "precision": float(precision),
+                        "recall": float(recall),
+                        "f1_score": float(f1),
+                        "fpr": float(fpr),
+                        "samples_with_ground_truth": len(self.actuals),
+                    }
+                )
             except Exception as e:
                 logger.warning(f"Failed to calculate accuracy metrics: {e}")
 
@@ -130,6 +144,7 @@ class VariantMetrics:
 # ============================================
 # A/B Test Manager
 # ============================================
+
 
 class ABTestManager:
     """Manages A/B tests for model ensembles"""
@@ -155,7 +170,7 @@ class ABTestManager:
         variant_id: str,
         ensemble_config: Dict,
         traffic_pct: float,
-        is_control: bool = False
+        is_control: bool = False,
     ):
         """
         Register a new variant.
@@ -173,7 +188,7 @@ class ABTestManager:
             "config": ensemble_config,
             "traffic_pct": traffic_pct,
             "is_control": is_control,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
         }
 
         self.metrics[variant_id] = VariantMetrics(variant_id)
@@ -242,8 +257,7 @@ class ABTestManager:
             # Time the prediction
             start = time.perf_counter()
             phish_prob, legit_prob, verdict, details = predict_ensemble_risk(
-                url,
-                ensemble_config=variant["config"]
+                url, ensemble_config=variant["config"]
             )
             latency_ms = (time.perf_counter() - start) * 1000
 
@@ -257,7 +271,7 @@ class ABTestManager:
                 "legit_probability": legit_prob,
                 "verdict": verdict,
                 "latency_ms": latency_ms,
-                "details": details
+                "details": details,
             }
 
         except Exception as e:
@@ -278,10 +292,7 @@ class ABTestManager:
 
     def get_variant_metrics(self) -> Dict:
         """Get performance metrics for all variants"""
-        return {
-            vid: metrics.get_metrics()
-            for vid, metrics in self.metrics.items()
-        }
+        return {vid: metrics.get_metrics() for vid, metrics in self.metrics.items()}
 
     def should_promote(self, variant_id: str) -> bool:
         """
@@ -313,12 +324,16 @@ class ABTestManager:
 
         # Check minimum samples
         if variant_metrics["requests"] < self.min_samples_for_promotion:
-            logger.info(f"Variant {variant_id} needs more samples: {variant_metrics['requests']}/{self.min_samples_for_promotion}")
+            logger.info(
+                f"Variant {variant_id} needs more samples: {variant_metrics['requests']}/{self.min_samples_for_promotion}"
+            )
             return False
 
         # Check minimum runtime
         if variant_metrics["runtime_hours"] < self.min_runtime_hours:
-            logger.info(f"Variant {variant_id} needs more runtime: {variant_metrics['runtime_hours']:.1f}/{self.min_runtime_hours} hours")
+            logger.info(
+                f"Variant {variant_id} needs more runtime: {variant_metrics['runtime_hours']:.1f}/{self.min_runtime_hours} hours"
+            )
             return False
 
         # Check if ground truth available
@@ -329,7 +344,9 @@ class ABTestManager:
         # Check accuracy improvement
         accuracy_delta = variant_metrics["accuracy"] - control_metrics["accuracy"]
         if accuracy_delta < self.min_accuracy_improvement:
-            logger.info(f"Variant {variant_id} accuracy not significantly better: {accuracy_delta:.4f}")
+            logger.info(
+                f"Variant {variant_id} accuracy not significantly better: {accuracy_delta:.4f}"
+            )
             return False
 
         # Check FPR degradation
@@ -357,12 +374,19 @@ class ABTestManager:
 
         # Check error rate
         if variant_metrics["error_rate"] > 0.05:  # >5% errors
-            logger.warning(f"Variant {variant_id} has high error rate: {variant_metrics['error_rate']:.4f}")
+            logger.warning(
+                f"Variant {variant_id} has high error rate: {variant_metrics['error_rate']:.4f}"
+            )
             return True
 
         # Check FPR
-        if "fpr" in variant_metrics and variant_metrics["fpr"] > self.auto_rollback_threshold:
-            logger.warning(f"Variant {variant_id} FPR too high: {variant_metrics['fpr']:.4f}")
+        if (
+            "fpr" in variant_metrics
+            and variant_metrics["fpr"] > self.auto_rollback_threshold
+        ):
+            logger.warning(
+                f"Variant {variant_id} FPR too high: {variant_metrics['fpr']:.4f}"
+            )
             return True
 
         return False
@@ -419,18 +443,18 @@ class ABTestManager:
         config = {
             "active": self.active,
             "variants": self.variants,
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now().isoformat(),
         }
 
         Path(self.config_path).parent.mkdir(parents=True, exist_ok=True)
 
-        with open(self.config_path, 'w') as f:
+        with open(self.config_path, "w") as f:
             json.dump(config, f, indent=2)
 
     def load_config(self):
         """Load configuration from disk"""
         if Path(self.config_path).exists():
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, "r") as f:
                 config = json.load(f)
 
             self.active = config.get("active", False)
@@ -447,7 +471,7 @@ class ABTestManager:
         """Export metrics to JSON file"""
         metrics = self.get_variant_metrics()
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(metrics, f, indent=2)
 
         logger.info(f"Exported metrics to {output_path}")
@@ -473,7 +497,9 @@ class ABTestManager:
             report.append(f"{'━' * 80}")
             report.append(f"Traffic: {variant_info['traffic_pct']:.1f}%")
             report.append(f"Requests: {variant_metrics['requests']:,}")
-            report.append(f"Errors: {variant_metrics['errors']} ({variant_metrics['error_rate']:.2%})")
+            report.append(
+                f"Errors: {variant_metrics['errors']} ({variant_metrics['error_rate']:.2%})"
+            )
             report.append(f"Runtime: {variant_metrics['runtime_hours']:.1f} hours")
 
             if "latency_p95_ms" in variant_metrics:
@@ -489,7 +515,9 @@ class ABTestManager:
                 report.append(f"  Recall: {variant_metrics['recall']:.4f}")
                 report.append(f"  F1: {variant_metrics['f1_score']:.4f}")
                 report.append(f"  FPR: {variant_metrics['fpr']:.4f}")
-                report.append(f"  Samples: {variant_metrics['samples_with_ground_truth']}")
+                report.append(
+                    f"  Samples: {variant_metrics['samples_with_ground_truth']}"
+                )
 
             # Promotion/rollback recommendations
             if self.should_promote(variant_id):

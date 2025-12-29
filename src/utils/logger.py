@@ -17,32 +17,34 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
     Adds timestamp, service name, and correlation ID.
     """
 
-    def add_fields(self, log_record: Dict[str, Any], record: logging.LogRecord, message_dict: Dict[str, Any]) -> None:
+    def add_fields(
+        self,
+        log_record: Dict[str, Any],
+        record: logging.LogRecord,
+        message_dict: Dict[str, Any],
+    ) -> None:
         """Add custom fields to log record."""
         super().add_fields(log_record, record, message_dict)
 
         # Add timestamp in ISO format
-        log_record['timestamp'] = datetime.utcnow().isoformat() + 'Z'
+        log_record["timestamp"] = datetime.utcnow().isoformat() + "Z"
 
         # Add service name
-        log_record['service'] = 'phishing-detection-api'
+        log_record["service"] = "phishing-detection-api"
 
         # Add log level
-        log_record['level'] = record.levelname
+        log_record["level"] = record.levelname
 
         # Add module and function info
-        log_record['module'] = record.module
-        log_record['function'] = record.funcName
+        log_record["module"] = record.module
+        log_record["function"] = record.funcName
 
         # Add line number for debugging
-        log_record['line'] = record.lineno
+        log_record["line"] = record.lineno
 
 
 def setup_logger(
-    name: str,
-    log_level: str = "INFO",
-    log_format: str = "json",
-    log_file: Path = None
+    name: str, log_level: str = "INFO", log_format: str = "json", log_file: Path = None
 ) -> logging.Logger:
     """
     Set up structured logger with JSON formatting.
@@ -73,13 +75,13 @@ def setup_logger(
     if log_format == "json":
         # JSON formatter for production
         formatter = CustomJsonFormatter(
-            '%(timestamp)s %(level)s %(service)s %(module)s %(function)s %(message)s'
+            "%(timestamp)s %(level)s %(service)s %(module)s %(function)s %(message)s"
         )
     else:
         # Text formatter for development
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(funcName)s:%(lineno)d - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
     console_handler.setFormatter(formatter)
@@ -117,7 +119,7 @@ def get_logger(name: str) -> logging.Logger:
         name=name,
         log_level=settings.log_level,
         log_format=settings.log_format,
-        log_file=settings.log_file if settings.log_file else None
+        log_file=settings.log_file if settings.log_file else None,
     )
 
 
@@ -131,7 +133,7 @@ from starlette.requests import Request
 
 
 # Context variable for request ID
-request_id_var: ContextVar[str] = ContextVar('request_id', default=None)
+request_id_var: ContextVar[str] = ContextVar("request_id", default=None)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -142,12 +144,12 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # Generate or extract request ID
-        request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
         request_id_var.set(request_id)
 
         # Add to response headers
         response = await call_next(request)
-        response.headers['X-Request-ID'] = request_id
+        response.headers["X-Request-ID"] = request_id
 
         return response
 

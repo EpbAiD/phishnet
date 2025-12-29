@@ -31,8 +31,8 @@ CHECKPOINT_DIR = os.path.join(BASE_DIR, "checkpoints")
 LOG_FILE = os.path.join("logs", "lookup_times.csv")
 
 MAX_WORKERS = 4
-PER_DOMAIN_DELAY = 5.0      # only used in batch mode
-RETRIES = 2                 # only used in batch mode
+PER_DOMAIN_DELAY = 5.0  # only used in batch mode
+RETRIES = 2  # only used in batch mode
 CHECKPOINT_EVERY = 500
 
 os.makedirs(os.path.dirname(WHOIS_FEATURE_FILE), exist_ok=True)
@@ -55,7 +55,9 @@ def extract_domain_from_url(url: str) -> str:
     return host
 
 
-def _log_latency(source: str, op: str, ident: str, start_t: float, ok: bool, extra: Dict = None):
+def _log_latency(
+    source: str, op: str, ident: str, start_t: float, ok: bool, extra: Dict = None
+):
     dur = time.time() - start_t
     row = {
         "source": source,
@@ -67,7 +69,9 @@ def _log_latency(source: str, op: str, ident: str, start_t: float, ok: bool, ext
     }
     if extra:
         row.update(extra)
-    pd.DataFrame([row]).to_csv(LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE), index=False)
+    pd.DataFrame([row]).to_csv(
+        LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE), index=False
+    )
 
 
 def _whois_template(domain: str) -> Dict:
@@ -152,7 +156,9 @@ def extract_whois_features(domain: str, mode: str = "batch") -> Dict:
             if creation_date:
                 feats["domain_age_days"] = (now - creation_date).days
             if creation_date and expiration_date:
-                feats["registration_length_days"] = (expiration_date - creation_date).days
+                feats["registration_length_days"] = (
+                    expiration_date - creation_date
+                ).days
 
             # status / country
             try:
@@ -166,9 +172,11 @@ def extract_whois_features(domain: str, mode: str = "batch") -> Dict:
             reg_name = str(getattr(w, "name", "")).lower()
             reg_org = str(getattr(w, "org", "")).lower()
             reg_email = str(getattr(w, "emails", "")).lower()
-            if any(flag in reg_name for flag in privacy_flags) or \
-               any(flag in reg_org for flag in privacy_flags) or \
-               any(flag in reg_email for flag in privacy_flags):
+            if (
+                any(flag in reg_name for flag in privacy_flags)
+                or any(flag in reg_org for flag in privacy_flags)
+                or any(flag in reg_email for flag in privacy_flags)
+            ):
                 feats["has_privacy_protection"] = 1
 
             feats["whois_success"] = 1
@@ -207,8 +215,16 @@ def _align_to_cache_schema(row_df: pd.DataFrame, cache_path: str) -> pd.DataFram
                 row_df[col] = pd.NA
             elif col in {"has_privacy_protection", "whois_success"}:
                 row_df[col] = 0
-            elif col in {"registrar", "whois_server", "creation_date", "expiration_date",
-                         "updated_date", "status", "registrant_country", "error_msg"}:
+            elif col in {
+                "registrar",
+                "whois_server",
+                "creation_date",
+                "expiration_date",
+                "updated_date",
+                "status",
+                "registrant_country",
+                "error_msg",
+            }:
                 row_df[col] = None
             elif col == "domain":
                 row_df[col] = row_df.get("domain", pd.Series(["unknown"]))
@@ -221,7 +237,9 @@ def _align_to_cache_schema(row_df: pd.DataFrame, cache_path: str) -> pd.DataFram
 
 
 # ---------------- Batch Builder ----------------
-def build_whois_features(input_domains: Union[str, List[str]], live_lookup: bool = True) -> pd.DataFrame:
+def build_whois_features(
+    input_domains: Union[str, List[str]], live_lookup: bool = True
+) -> pd.DataFrame:
     existing_df = _load_existing_whois()
     have = set(existing_df["domain"].astype(str)) if not existing_df.empty else set()
 
@@ -240,12 +258,16 @@ def build_whois_features(input_domains: Union[str, List[str]], live_lookup: bool
 
     new_rows: List[Dict] = []
     if live_lookup and missing:
-        print(f"⚙️ Fetching WHOIS data for {len(missing)} domains (live_lookup={live_lookup}) ...")
+        print(
+            f"⚙️ Fetching WHOIS data for {len(missing)} domains (live_lookup={live_lookup}) ..."
+        )
         if len(missing) == 1:
             new_rows = [extract_whois_features(missing[0], mode="single")]
         else:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                futures = {ex.submit(extract_whois_features, d, "batch"): d for d in missing}
+                futures = {
+                    ex.submit(extract_whois_features, d, "batch"): d for d in missing
+                }
                 for i, f in enumerate(as_completed(futures), start=1):
                     new_rows.append(f.result())
                     if (i % CHECKPOINT_EVERY) == 0:
@@ -328,13 +350,15 @@ def extract_single_whois_features(url_or_domain: str, live_lookup: bool = True) 
                 print(f"✅ Found cached WHOIS record for {domain}")
                 row_dict = hit.iloc[0].to_dict()
                 # Remove 'domain' key to return only feature values
-                row_dict.pop('domain', None)
+                row_dict.pop("domain", None)
                 return row_dict
         except Exception:
             pass
 
     if live_lookup:
-        print(f"⚡ No cache for {domain}; performing live WHOIS lookup (single mode)...")
+        print(
+            f"⚡ No cache for {domain}; performing live WHOIS lookup (single mode)..."
+        )
         # Use mode="single" for no retries, no delays
         new_feat = extract_whois_features(domain, mode="single")
 
@@ -349,7 +373,7 @@ def extract_single_whois_features(url_or_domain: str, live_lookup: bool = True) 
 
         # Return as dict (without 'domain' key)
         result = new_feat.copy()
-        result.pop('domain', None)
+        result.pop("domain", None)
         return result
 
     raise ValueError(f"Domain {domain} not found in cache and live_lookup=False")

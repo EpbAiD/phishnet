@@ -31,18 +31,15 @@ URL_FEATURE_TRANSLATIONS = {
     "num_ampersand": "has multiple ampersands in the URL",
     "num_hash": "has multiple hash symbols",
     "num_at": "uses @ symbol (redirection trick)",
-
     # Suspicious patterns
     "suspicious_tld": "uses a suspicious domain extension (like .xyz, .tk)",
     "brand_in_subdomain": "contains a brand name in a suspicious position",
     "has_punycode": "uses international characters (punycode)",
     "has_subdomain": "has a subdomain structure",
     "num_subdomains": "has multiple subdomains",
-
     # Entropy and randomness
     "domain_entropy": "has random-looking characters in the domain",
     "path_entropy": "has random-looking characters in the path",
-
     # Protocol
     "is_https": "uses HTTPS protocol",
     "port_in_url": "specifies a custom port number",
@@ -54,16 +51,13 @@ DNS_FEATURE_TRANSLATIONS = {
     "min_ttl": "has very short DNS cache time (TTL)",
     "max_ttl": "has unusual DNS cache time",
     "avg_ttl": "has suspicious average DNS cache settings",
-
     # IP features
     "num_ips": "resolves to multiple IP addresses",
     "num_unique_countries": "has servers in multiple countries",
     "has_private_ip": "uses a private IP address",
-
     # ASN features
     "asn_reputation_score": "is hosted by a provider with poor reputation",
     "is_cloud_provider": "is hosted on cloud infrastructure",
-
     # Geographic
     "country_risk_score": "is hosted in a high-risk country",
     "multiple_nameservers": "uses multiple nameservers",
@@ -75,16 +69,13 @@ WHOIS_FEATURE_TRANSLATIONS = {
     "domain_age_days": "domain registration age",
     "days_until_expiry": "days until domain expires",
     "registration_length_days": "registration period length",
-
     # Status features
     "is_recently_registered": "was registered very recently",
     "expires_soon": "is about to expire",
     "is_privacy_protected": "uses privacy protection (hides owner info)",
-
     # Registrar features
     "registrar_abuse_score": "is registered with a provider known for abuse",
     "free_registration": "uses a free domain registration service",
-
     # Update features
     "recently_updated": "was recently updated",
     "update_frequency": "has been updated frequently",
@@ -95,11 +86,13 @@ WHOIS_FEATURE_TRANSLATIONS = {
 # ---------------------------------------------------------------
 _explainer_cache = {}
 
+
 def get_estimator(model_entry):
     """Extract actual sklearn estimator if model is wrapped in dict."""
     if isinstance(model_entry, dict) and "model" in model_entry:
         return model_entry["model"]
     return model_entry
+
 
 def align_to_model_schema(X: pd.DataFrame, model) -> pd.DataFrame:
     """Ensure X has all columns expected by model; fill missing with 0."""
@@ -112,16 +105,15 @@ def align_to_model_schema(X: pd.DataFrame, model) -> pd.DataFrame:
         X = X[expected]
     return X
 
+
 def numeric_only(df: pd.DataFrame) -> pd.DataFrame:
     """Keep only numeric columns, fill NaNs."""
     df = df.select_dtypes(include=[np.number])
     return df.fillna(0)
 
+
 def extract_shap_features(
-    model,
-    X: pd.DataFrame,
-    model_type: str,
-    top_n: int = 5
+    model, X: pd.DataFrame, model_type: str, top_n: int = 5
 ) -> List[Dict]:
     """
     Extract SHAP values and return top contributing features.
@@ -199,13 +191,19 @@ def extract_shap_features(
                 feat_name, feat_value, model_type
             )
 
-            top_features.append({
-                "feature": feat_name,
-                "value": float(feat_value),
-                "shap_contribution": shap_contribution,
-                "impact": "increases phishing score" if shap_contribution > 0 else "decreases phishing score",
-                "plain_language": plain_language
-            })
+            top_features.append(
+                {
+                    "feature": feat_name,
+                    "value": float(feat_value),
+                    "shap_contribution": shap_contribution,
+                    "impact": (
+                        "increases phishing score"
+                        if shap_contribution > 0
+                        else "decreases phishing score"
+                    ),
+                    "plain_language": plain_language,
+                }
+            )
 
         return top_features
 
@@ -213,10 +211,9 @@ def extract_shap_features(
         print(f"⚠️ SHAP extraction failed for {model_type}: {e}")
         return []
 
+
 def translate_feature_to_plain_language(
-    feature_name: str,
-    feature_value: float,
-    model_type: str
+    feature_name: str, feature_value: float, model_type: str
 ) -> str:
     """
     Translate a technical feature name and value to plain language.
@@ -261,7 +258,9 @@ def translate_feature_to_plain_language(
     elif "suspicious_tld" in feature_name and feature_value == 1:
         return "uses a domain extension commonly used in phishing (.xyz, .tk, etc.)"
     elif "brand_in_subdomain" in feature_name and feature_value == 1:
-        return "contains a brand name (like PayPal, Amazon) but isn't the official website"
+        return (
+            "contains a brand name (like PayPal, Amazon) but isn't the official website"
+        )
     else:
         # Generic translation
         if isinstance(feature_value, float):
@@ -270,6 +269,7 @@ def translate_feature_to_plain_language(
             else:
                 return f"{base_translation} ({feature_value:.2f})"
         return base_translation
+
 
 def clear_explainer_cache():
     """Clear the SHAP explainer cache to free memory."""

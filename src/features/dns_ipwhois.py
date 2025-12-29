@@ -38,15 +38,16 @@ os.makedirs(os.path.dirname(DNS_FEATURE_FILE), exist_ok=True)
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
-MAX_WORKERS = 5                  # Only used in batch mode
-PER_DOMAIN_DELAY = 2.0           # Only applied in batch mode
-INTRA_QUERY_DELAY = 0.5          # Only applied in batch mode
-CHECKPOINT_EVERY = 500           # Only used in batch mode
+MAX_WORKERS = 5  # Only used in batch mode
+PER_DOMAIN_DELAY = 2.0  # Only applied in batch mode
+INTRA_QUERY_DELAY = 0.5  # Only applied in batch mode
+CHECKPOINT_EVERY = 500  # Only used in batch mode
 
 # ---------------- Resolver ----------------
 resolver = dns.resolver.Resolver()
 resolver.timeout = 3
 resolver.lifetime = 5
+
 
 # ---------------- Helper Functions ----------------
 def shannon_entropy(s: str) -> float:
@@ -56,7 +57,10 @@ def shannon_entropy(s: str) -> float:
     probs = [c / len(s) for c in counts.values()]
     return -sum(p * log2(p) for p in probs)
 
-def _log_latency(source: str, op: str, ident: str, start_t: float, ok: bool, extra: Dict = None):
+
+def _log_latency(
+    source: str, op: str, ident: str, start_t: float, ok: bool, extra: Dict = None
+):
     dur = time.time() - start_t
     row = {
         "source": source,
@@ -68,7 +72,10 @@ def _log_latency(source: str, op: str, ident: str, start_t: float, ok: bool, ext
     }
     if extra:
         row.update(extra)
-    pd.DataFrame([row]).to_csv(LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE), index=False)
+    pd.DataFrame([row]).to_csv(
+        LOG_FILE, mode="a", header=not os.path.exists(LOG_FILE), index=False
+    )
+
 
 def safe_query(domain: str, rrtype: str, apply_delay: bool = True):
     """DNS query with optional delay (only for batch mode)"""
@@ -82,6 +89,7 @@ def safe_query(domain: str, rrtype: str, apply_delay: bool = True):
             time.sleep(INTRA_QUERY_DELAY)
         return None
 
+
 def safe_ipwhois(ip: str) -> Dict[str, str]:
     """IPWHOIS lookup - no delays needed as it's rate-limited naturally"""
     try:
@@ -94,6 +102,7 @@ def safe_ipwhois(ip: str) -> Dict[str, str]:
         }
     except Exception:
         return {"asn": "NA", "asn_org": "NA", "asn_country": "NA", "cidr_range": "NA"}
+
 
 def dns_record_template(domain: str) -> Dict:
     return {
@@ -131,6 +140,7 @@ def dns_record_template(domain: str) -> Dict:
         "error_type": -1.0,
     }
 
+
 # ---------------- Domain Normalization ----------------
 def extract_domain_from_url(url: str) -> str:
     """Extract a clean hostname or IP from URL or raw string."""
@@ -144,6 +154,7 @@ def extract_domain_from_url(url: str) -> str:
     # Strip port
     host = host.split(":")[0].strip().lower()
     return host
+
 
 # ---------------- Core DNS + IPWHOIS Lookup ----------------
 def extract_dns_ipwhois(domain: str, mode: str = "batch") -> Dict:
@@ -160,7 +171,7 @@ def extract_dns_ipwhois(domain: str, mode: str = "batch") -> Dict:
     t0 = time.time()
 
     # Determine if delays should be applied
-    apply_delay = (mode == "batch")
+    apply_delay = mode == "batch"
 
     # --- If input is a direct IP, skip DNS lookups entirely ---
     try:
@@ -192,9 +203,17 @@ def extract_dns_ipwhois(domain: str, mode: str = "batch") -> Dict:
                 except Exception:
                     pass
                 try:
-                    if hasattr(ans, "rrset") and ans.rrset and hasattr(ans.rrset, "ttl"):
+                    if (
+                        hasattr(ans, "rrset")
+                        and ans.rrset
+                        and hasattr(ans.rrset, "ttl")
+                    ):
                         ttl_values.append(int(ans.rrset.ttl))
-                    elif hasattr(ans, "response") and ans.response and ans.response.answer:
+                    elif (
+                        hasattr(ans, "response")
+                        and ans.response
+                        and ans.response.answer
+                    ):
                         for rr in ans.response.answer:
                             if hasattr(rr, "ttl"):
                                 ttl_values.append(int(rr.ttl))
@@ -221,7 +240,9 @@ def extract_dns_ipwhois(domain: str, mode: str = "batch") -> Dict:
             feats["ttl_min"] = min(ttl_values)
             feats["ttl_max"] = max(ttl_values)
             feats["ttl_mean"] = float(statistics.mean(ttl_values))
-            feats["ttl_var"] = float(statistics.pvariance(ttl_values)) if len(ttl_values) > 1 else 0.0
+            feats["ttl_var"] = (
+                float(statistics.pvariance(ttl_values)) if len(ttl_values) > 1 else 0.0
+            )
     except Exception:
         pass  # Continue with other queries
 
@@ -323,9 +344,16 @@ def extract_dns_ipwhois(domain: str, mode: str = "batch") -> Dict:
 
     return feats
 
+
 # ---------------- Batch Builder ----------------
-def build_dns_features(input_domains: Union[str, List[str]], live_lookup: bool = True) -> pd.DataFrame:
-    existing_df = pd.read_csv(DNS_FEATURE_FILE) if os.path.exists(DNS_FEATURE_FILE) else pd.DataFrame()
+def build_dns_features(
+    input_domains: Union[str, List[str]], live_lookup: bool = True
+) -> pd.DataFrame:
+    existing_df = (
+        pd.read_csv(DNS_FEATURE_FILE)
+        if os.path.exists(DNS_FEATURE_FILE)
+        else pd.DataFrame()
+    )
     have = set(existing_df["domain"].astype(str)) if not existing_df.empty else set()
 
     if isinstance(input_domains, str):
@@ -342,12 +370,16 @@ def build_dns_features(input_domains: Union[str, List[str]], live_lookup: bool =
 
     new_rows: List[Dict] = []
     if live_lookup and missing:
-        print(f"⚙️ Fetching DNS/IPWHOIS for {len(missing)} domains (live_lookup={live_lookup}) ...")
+        print(
+            f"⚙️ Fetching DNS/IPWHOIS for {len(missing)} domains (live_lookup={live_lookup}) ..."
+        )
         if len(missing) == 1:
             new_rows = [extract_dns_ipwhois(missing[0], mode="single")]
         else:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                futures = {ex.submit(extract_dns_ipwhois, d, "batch"): d for d in missing}
+                futures = {
+                    ex.submit(extract_dns_ipwhois, d, "batch"): d for d in missing
+                }
                 for i, f in enumerate(as_completed(futures), start=1):
                     new_rows.append(f.result())
                     if i % CHECKPOINT_EVERY == 0:
@@ -367,6 +399,7 @@ def build_dns_features(input_domains: Union[str, List[str]], live_lookup: bool =
         print(f"✅ Saved DNS+IPWHOIS → {DNS_FEATURE_FILE} (shape: {df.shape})")
     return df
 
+
 # ---------------- Cache Alignment ----------------
 def _align_to_cache_schema(row_df: pd.DataFrame, cache_path: str) -> pd.DataFrame:
     if not os.path.exists(cache_path):
@@ -374,8 +407,19 @@ def _align_to_cache_schema(row_df: pd.DataFrame, cache_path: str) -> pd.DataFram
     cache_cols = list(pd.read_csv(cache_path, nrows=1).columns)
     for col in cache_cols:
         if col not in row_df.columns:
-            if col in {"ttl_min", "ttl_max", "mx_priority_min", "mx_priority_max", "num_A", "num_AAAA",
-                       "num_MX", "num_NS", "num_TXT", "cname_chain_length", "num_distinct_ips"}:
+            if col in {
+                "ttl_min",
+                "ttl_max",
+                "mx_priority_min",
+                "mx_priority_max",
+                "num_A",
+                "num_AAAA",
+                "num_MX",
+                "num_NS",
+                "num_TXT",
+                "cname_chain_length",
+                "num_distinct_ips",
+            }:
                 row_df[col] = 0
             elif col in {"ttl_mean", "ttl_var", "txt_entropy", "error_type"}:
                 row_df[col] = 0.0
@@ -390,6 +434,7 @@ def _align_to_cache_schema(row_df: pd.DataFrame, cache_path: str) -> pd.DataFram
     extra_cols = [c for c in row_df.columns if c not in cache_cols]
     ordered = cache_cols + extra_cols
     return row_df[ordered]
+
 
 # ---------------- Single-domain Fetcher ----------------
 def get_domain_features(domain: str, live_lookup: bool = False) -> pd.DataFrame:
@@ -440,6 +485,7 @@ def extract_single_domain_features(url_or_domain: str) -> Dict:
         >>> # feature_values = [features[key] for key in feature_order]
     """
     return extract_dns_ipwhois(url_or_domain, mode="single")
+
 
 # ---------------- Script Entry ----------------
 if __name__ == "__main__":

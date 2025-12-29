@@ -120,8 +120,7 @@ def predict_whois_risk(url: str) -> Tuple[float, float, str, dict]:
     # Step 2: Preprocess (flatten lists + impute)
     # Note: pass empty dict for url_features since we're only using WHOIS
     features = preprocess_features_for_inference(
-        url_features={},
-        whois_features=whois_feats
+        url_features={}, whois_features=whois_feats
     )
 
     # Step 3: Load model and convert to DataFrame
@@ -168,8 +167,7 @@ def predict_dns_risk(url: str) -> Tuple[float, float, str, dict]:
     # Step 2: Preprocess (flatten lists + impute)
     # Note: pass empty dict for url_features since we're only using DNS
     features = preprocess_features_for_inference(
-        url_features={},
-        dns_features=dns_feats
+        url_features={}, dns_features=dns_feats
     )
 
     # Step 3: Load model and convert to DataFrame
@@ -203,11 +201,7 @@ def _load_ensemble_config():
     # Default fallback configuration
     default_config = {
         "weights": {"url": 0.60, "dns": 0.15, "whois": 0.25},
-        "models": {
-            "url": "catboost",
-            "dns": "catboost",
-            "whois": "catboost"
-        }
+        "models": {"url": "catboost", "dns": "catboost", "whois": "catboost"},
     }
 
     if os.path.exists(metadata_path):
@@ -225,7 +219,9 @@ def _load_ensemble_config():
     return default_config
 
 
-def predict_ensemble_risk_with_weights(url: str, weights: dict = None) -> Tuple[float, float, str, dict]:
+def predict_ensemble_risk_with_weights(
+    url: str, weights: dict = None
+) -> Tuple[float, float, str, dict]:
     """
     Compute P(phishing) using ensemble with custom weights.
 
@@ -270,7 +266,9 @@ def predict_ensemble_risk_with_weights(url: str, weights: dict = None) -> Tuple[
     url_weight = weights["url"]
     whois_weight = weights["whois"]
     dns_weight = weights["dns"]
-    ensemble_prob = (url_weight * url_prob) + (whois_weight * whois_prob) + (dns_weight * dns_prob)
+    ensemble_prob = (
+        (url_weight * url_prob) + (whois_weight * whois_prob) + (dns_weight * dns_prob)
+    )
 
     total_latency_ms = (time.time() - t0) * 1000.0
 
@@ -280,30 +278,37 @@ def predict_ensemble_risk_with_weights(url: str, weights: dict = None) -> Tuple[
             "latency_ms": url_latency,
             "model": url_model,
             "weight": url_weight,
-            "features": url_debug
+            "features": url_debug,
         },
         "whois_prediction": {
             "risk_score": whois_prob,
             "latency_ms": whois_latency,
             "model": whois_model,
             "weight": whois_weight,
-            "features": whois_debug
+            "features": whois_debug,
         },
         "dns_prediction": {
             "risk_score": dns_prob,
             "latency_ms": dns_latency,
             "model": dns_model,
             "weight": dns_weight,
-            "features": dns_debug
+            "features": dns_debug,
         },
         "ensemble": {
             "weighted_score": ensemble_prob,
             "formula": f"{url_weight:.0%}*{url_prob:.4f} + {whois_weight:.0%}*{whois_prob:.4f} + {dns_weight:.0%}*{dns_prob:.4f}",
-            "config_source": "custom_weights" if weights else "models/production_metadata.json",
-        }
+            "config_source": (
+                "custom_weights" if weights else "models/production_metadata.json"
+            ),
+        },
     }
 
-    return float(ensemble_prob), float(total_latency_ms), f"ensemble_custom_weights", debug
+    return (
+        float(ensemble_prob),
+        float(total_latency_ms),
+        f"ensemble_custom_weights",
+        debug,
+    )
 
 
 def predict_ensemble_risk(url: str) -> Tuple[float, float, str, dict]:

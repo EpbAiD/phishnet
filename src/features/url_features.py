@@ -11,8 +11,10 @@ from collections import Counter
 from math import log2
 from typing import List, Union, Optional
 from ipaddress import ip_address
+
 # auto-create processed directory for outputs
 os.makedirs("data/processed", exist_ok=True)
+
 
 # ---------------------------------------------------------------
 # 1️⃣  Core Feature Extractor
@@ -20,19 +22,54 @@ os.makedirs("data/processed", exist_ok=True)
 class URLFeatureExtractor:
     def __init__(self):
         self.suspicious_keywords = [
-            'login', 'secure', 'account', 'verify', 'update', 'password',
-            'bank', 'client', 'mail', 'outlook', 'inbox', 'admin', 'billing',
-            'free', 'click', 'bonus', 'office', 'paypal', 'ebay'
+            "login",
+            "secure",
+            "account",
+            "verify",
+            "update",
+            "password",
+            "bank",
+            "client",
+            "mail",
+            "outlook",
+            "inbox",
+            "admin",
+            "billing",
+            "free",
+            "click",
+            "bonus",
+            "office",
+            "paypal",
+            "ebay",
         ]
-        self.download_exts = ['.zip', '.rar', '.exe', '.tar', '.gz', '.iso', '.apk', '.sh', '.bat']
-        self.script_exts = ['.js', '.php', '.py', '.asp', '.jsp']
-        self.shortener_domains = ["bit.ly", "tinyurl.com", "is.gd", "t.co", "goo.gl", "ow.ly", "buff.ly"]
+        self.download_exts = [
+            ".zip",
+            ".rar",
+            ".exe",
+            ".tar",
+            ".gz",
+            ".iso",
+            ".apk",
+            ".sh",
+            ".bat",
+        ]
+        self.script_exts = [".js", ".php", ".py", ".asp", ".jsp"]
+        self.shortener_domains = [
+            "bit.ly",
+            "tinyurl.com",
+            "is.gd",
+            "t.co",
+            "goo.gl",
+            "ow.ly",
+            "buff.ly",
+        ]
         self.invalid_urls_ = []
-        self.benign_subdomains = {'www', 'm', 'mobile', 'en'}
+        self.benign_subdomains = {"www", "m", "mobile", "en"}
 
     # -----------------------------------------
     def shannon_entropy(self, s):
-        if not s: return 0
+        if not s:
+            return 0
         prob = [n / len(s) for n in Counter(s).values()]
         return -sum(p * log2(p) for p in prob)
 
@@ -40,9 +77,12 @@ class URLFeatureExtractor:
     def ip_category(self, hostname):
         try:
             ip = ip_address(hostname)
-            if ip.is_private: return "private"
-            if ip.is_reserved: return "reserved"
-            if ip.is_loopback: return "loopback"
+            if ip.is_private:
+                return "private"
+            if ip.is_reserved:
+                return "reserved"
+            if ip.is_loopback:
+                return "loopback"
             return "public"
         except Exception:
             return "none"
@@ -53,16 +93,21 @@ class URLFeatureExtractor:
         if any(ext in q for ext in self.download_exts):
             return "download"
         for ext in self.download_exts:
-            if path.endswith(ext): return "download"
+            if path.endswith(ext):
+                return "download"
         for ext in self.script_exts:
-            if path.endswith(ext): return "script"
+            if path.endswith(ext):
+                return "script"
         return "none"
 
     # -----------------------------------------
     def domain_quality(self, domain, suffix):
-        if not domain: return "empty"
-        if domain.isnumeric(): return "numeric_only"
-        if not suffix: return "no_tld"
+        if not domain:
+            return "empty"
+        if domain.isnumeric():
+            return "numeric_only"
+        if not suffix:
+            return "no_tld"
         return "normal"
 
     # -----------------------------------------
@@ -82,66 +127,84 @@ class URLFeatureExtractor:
         features = {}
 
         # BASIC LENGTH / SYMBOLS
-        features['url_length'] = len(url)
-        features['hostname_length'] = len(hostname)
-        features['path_length'] = len(path)
+        features["url_length"] = len(url)
+        features["hostname_length"] = len(hostname)
+        features["path_length"] = len(path)
 
-        subs = [s for s in subdomain.split('.') if s and s not in self.benign_subdomains]
-        features['num_subdomains'] = len(subs)
-        features['num_dots'] = hostname.count('.') if hostname else 0
-        features['num_special_chars'] = len(re.findall(r'[?#&%=+@/$!*]', url))
-        features['num_digits'] = sum(c.isdigit() for c in url)
-        features['num_uppercase_chars'] = sum(c.isupper() for c in url)
+        subs = [
+            s for s in subdomain.split(".") if s and s not in self.benign_subdomains
+        ]
+        features["num_subdomains"] = len(subs)
+        features["num_dots"] = hostname.count(".") if hostname else 0
+        features["num_special_chars"] = len(re.findall(r"[?#&%=+@/$!*]", url))
+        features["num_digits"] = sum(c.isdigit() for c in url)
+        features["num_uppercase_chars"] = sum(c.isupper() for c in url)
 
         # STRUCTURE
-        features['has_at_symbol'] = '@' in url
+        features["has_at_symbol"] = "@" in url
         after_host = url.split(hostname, 1)[-1]
-        features['has_double_slash_redirect'] = int('//' in after_host.strip('/'))
-        features['has_dash_in_domain'] = '-' in domain
-        features['is_ip_address'] = int(bool(re.match(r'\d{1,3}(\.\d{1,3}){3}$', hostname)))
-        features['ip_category'] = self.ip_category(hostname)
+        features["has_double_slash_redirect"] = int("//" in after_host.strip("/"))
+        features["has_dash_in_domain"] = "-" in domain
+        features["is_ip_address"] = int(
+            bool(re.match(r"\d{1,3}(\.\d{1,3}){3}$", hostname))
+        )
+        features["ip_category"] = self.ip_category(hostname)
 
         # ENCODING / OBFUSCATION
-        features['has_encoded_chars'] = '%' in url
-        features['has_non_ascii_chars'] = any(ord(c) > 127 for c in url)
-        features['url_entropy'] = self.shannon_entropy(url)
-        features['hostname_entropy'] = self.shannon_entropy(hostname)
+        features["has_encoded_chars"] = "%" in url
+        features["has_non_ascii_chars"] = any(ord(c) > 127 for c in url)
+        features["url_entropy"] = self.shannon_entropy(url)
+        features["hostname_entropy"] = self.shannon_entropy(hostname)
         letters = sum(c.isalpha() for c in url)
-        features['digit_to_letter_ratio'] = features['num_digits'] / (letters + 1e-6)
+        features["digit_to_letter_ratio"] = features["num_digits"] / (letters + 1e-6)
 
         # DOMAIN / TLD
-        features['domain_quality'] = self.domain_quality(domain, suffix)
-        features['tld_length'] = len(suffix)
-        features['subdomain_entropy'] = 0 if not subs else self.shannon_entropy("".join(subs))
-        features['subdomain_length'] = sum(len(s) for s in subs)
+        features["domain_quality"] = self.domain_quality(domain, suffix)
+        features["tld_length"] = len(suffix)
+        features["subdomain_entropy"] = (
+            0 if not subs else self.shannon_entropy("".join(subs))
+        )
+        features["subdomain_length"] = sum(len(s) for s in subs)
 
         # KEYWORDS / BRAND
         URL_lower = url.lower()
-        features['has_login_keyword'] = int(any(word in URL_lower for word in self.suspicious_keywords[:4]))
-        features['has_suspicious_words'] = int(any(word in URL_lower for word in self.suspicious_keywords[4:]))
-        features['has_brand_mismatch'] = int(domain not in URL_lower and any(word in URL_lower for word in ['paypal','ebay','amazon']))
+        features["has_login_keyword"] = int(
+            any(word in URL_lower for word in self.suspicious_keywords[:4])
+        )
+        features["has_suspicious_words"] = int(
+            any(word in URL_lower for word in self.suspicious_keywords[4:])
+        )
+        features["has_brand_mismatch"] = int(
+            domain not in URL_lower
+            and any(word in URL_lower for word in ["paypal", "ebay", "amazon"])
+        )
 
         # PAYLOAD
-        features['file_type'] = self.detect_extension_type(path, query)
-        features['is_file_download'] = int(features['file_type'] == "download")
-        features['is_script_file'] = int(features['file_type'] == "script")
+        features["file_type"] = self.detect_extension_type(path, query)
+        features["is_file_download"] = int(features["file_type"] == "download")
+        features["is_script_file"] = int(features["file_type"] == "script")
 
         # SHORTENER
         host_norm = hostname.replace("www.", "")
-        features['is_shortened'] = int(host_norm in self.shortener_domains)
+        features["is_shortened"] = int(host_norm in self.shortener_domains)
 
         # PATH + QUERY
-        features['num_fragments'] = url.count('#')
-        features['num_query_params'] = len(parse_qs(query))
-        features['num_directories'] = path.count('/')
+        features["num_fragments"] = url.count("#")
+        features["num_query_params"] = len(parse_qs(query))
+        features["num_directories"] = path.count("/")
 
         # PORT
         port = parsed.port if parsed.port is not None else -1
-        features['port'] = port
-        risky_ports = [21,22,23,25,80,8080,8443,3389,5900,53,445]
-        features['is_risky_port'] = int(port in risky_ports)
-        features['protocol_mismatch'] = int((parsed.scheme == "http" and port == 443) or (parsed.scheme == "https" and port == 80))
-        features['is_unknown_port'] = int(port not in [-1, 80, 443] and port not in risky_ports)
+        features["port"] = port
+        risky_ports = [21, 22, 23, 25, 80, 8080, 8443, 3389, 5900, 53, 445]
+        features["is_risky_port"] = int(port in risky_ports)
+        features["protocol_mismatch"] = int(
+            (parsed.scheme == "http" and port == 443)
+            or (parsed.scheme == "https" and port == 80)
+        )
+        features["is_unknown_port"] = int(
+            port not in [-1, 80, 443] and port not in risky_ports
+        )
 
         return features
 
@@ -149,9 +212,11 @@ class URLFeatureExtractor:
     def _add_engineered_features(self, features: dict, url: str) -> dict:
         """Add engineered features to a feature dictionary"""
         # Engineered features that depend on base features
-        features['contains_hex_encoding'] = int('%' in url)
-        features['starts_with_https_but_contains_http'] = int(url.startswith("https") and "http://" in url[8:])
-        features['missing_hostname_flag'] = int(features['hostname_length'] == 0)
+        features["contains_hex_encoding"] = int("%" in url)
+        features["starts_with_https_but_contains_http"] = int(
+            url.startswith("https") and "http://" in url[8:]
+        )
+        features["missing_hostname_flag"] = int(features["hostname_length"] == 0)
         return features
 
     # -----------------------------------------
@@ -172,12 +237,12 @@ class URLFeatureExtractor:
 
         if include_url:
             # Add URL at the beginning for consistency with batch processing
-            all_features = {'url': url, **all_features}
+            all_features = {"url": url, **all_features}
 
         return all_features
 
     # -------------------------
-    def transform_dataframe(self, df, url_column='url') -> pd.DataFrame:
+    def transform_dataframe(self, df, url_column="url") -> pd.DataFrame:
         """
         Extract features from a DataFrame of URLs.
         Uses the same extract_features method as single URL processing for consistency.
@@ -201,11 +266,15 @@ class URLFeatureExtractor:
         print(f"[INFO] Valid URLs: {len(valid_indices)}")
         print(f"[INFO] Invalid URLs: {len(self.invalid_urls_)}")
         feature_df = pd.DataFrame(feature_rows)
-        return pd.concat([df.iloc[valid_indices].reset_index(drop=True), feature_df], axis=1)
+        return pd.concat(
+            [df.iloc[valid_indices].reset_index(drop=True), feature_df], axis=1
+        )
+
 
 # ---------------------------------------------------------------
 # 3️⃣ UNIFIED API FOR TRAINING & INFERENCE
 # ---------------------------------------------------------------
+
 
 def extract_features_from_dataset(input_csv, output_csv=None, url_column="url"):
     """
@@ -274,17 +343,27 @@ def extract_features_for_urls(urls: Union[str, List[str]]) -> pd.DataFrame:
         feats = extractor.extract_features(u, include_url=False)
         feats["url"] = u  # Add URL at the front
         # Reorder to put url first
-        results.append({'url': u, **feats})
+        results.append({"url": u, **feats})
     return pd.DataFrame(results)
+
 
 # ----------------------------- RUNNER ---------------------------
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="URL Feature Extraction Utility")
-    parser.add_argument("--input", type=str, required=True, help="CSV path OR single URL")
-    parser.add_argument("--output", type=str, default=None, help="Path to save CSV results")
-    parser.add_argument("--mode", type=str, default="auto", choices=["auto", "single", "multi", "dataset"])
+    parser.add_argument(
+        "--input", type=str, required=True, help="CSV path OR single URL"
+    )
+    parser.add_argument(
+        "--output", type=str, default=None, help="Path to save CSV results"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="auto",
+        choices=["auto", "single", "multi", "dataset"],
+    )
     args = parser.parse_args()
 
     # SINGLE or MULTI URL

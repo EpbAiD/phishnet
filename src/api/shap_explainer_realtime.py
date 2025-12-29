@@ -17,7 +17,7 @@ from src.api.feature_importance_explainer import (
     URL_FEATURE_TRANSLATIONS,
     DNS_FEATURE_TRANSLATIONS,
     WHOIS_FEATURE_TRANSLATIONS,
-    translate_feature_value_to_plain_language
+    translate_feature_value_to_plain_language,
 )
 
 # ---------------------------------------------------------------
@@ -27,10 +27,7 @@ _explainer_cache = {}
 
 
 def extract_shap_features_realtime(
-    model,
-    X: pd.DataFrame,
-    model_type: str,
-    top_n: int = 5
+    model, X: pd.DataFrame, model_type: str, top_n: int = 5
 ) -> List[Dict]:
     """
     Extract SHAP values for a single URL in real-time during inference.
@@ -96,20 +93,29 @@ def extract_shap_features_realtime(
                 feat_name, feat_value, model_type
             )
 
-            top_features.append({
-                "feature": feat_name,
-                "value": float(feat_value),
-                "shap_contribution": shap_contribution,
-                "impact": "increases phishing risk" if shap_contribution > 0 else "decreases phishing risk",
-                "plain_language": plain_language
-            })
+            top_features.append(
+                {
+                    "feature": feat_name,
+                    "value": float(feat_value),
+                    "shap_contribution": shap_contribution,
+                    "impact": (
+                        "increases phishing risk"
+                        if shap_contribution > 0
+                        else "decreases phishing risk"
+                    ),
+                    "plain_language": plain_language,
+                }
+            )
 
         return top_features
 
     except Exception as e:
         print(f"⚠️ SHAP extraction failed for {model_type}: {e}")
         # Fallback to Feature Importance if SHAP fails
-        from src.api.feature_importance_explainer import extract_important_features_with_values
+        from src.api.feature_importance_explainer import (
+            extract_important_features_with_values,
+        )
+
         return extract_important_features_with_values(model, X, model_type, top_n=top_n)
 
 

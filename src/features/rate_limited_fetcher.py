@@ -65,7 +65,7 @@ class RateLimitedFetcher:
         dns_rate: float = 2.0,  # 2 requests per second for DNS
         whois_rate: float = 1.0,  # 1 request per second for WHOIS
         max_retries: int = 3,
-        initial_backoff: float = 1.0
+        initial_backoff: float = 1.0,
     ):
         """
         Args:
@@ -104,13 +104,13 @@ class RateLimitedFetcher:
         non_default = 0
 
         for value in features.values():
-            if value not in [0, -999, None, '', 'MISSING', 'N/A']:
+            if value not in [0, -999, None, "", "MISSING", "N/A"]:
                 non_default += 1
 
         validity_pct = non_default / total
 
         # Different thresholds for DNS vs WHOIS
-        threshold = 0.30 if feature_type == 'dns' else 0.20
+        threshold = 0.30 if feature_type == "dns" else 0.20
 
         if validity_pct >= threshold:
             return True
@@ -153,13 +153,13 @@ class RateLimitedFetcher:
                 features = extract_single_domain_features(url)
 
                 # Validate features
-                if self._validate_features(features, 'dns'):
+                if self._validate_features(features, "dns"):
                     self.dns_success += 1
                     return features
                 else:
                     logger.warning(f"DNS features invalid for {domain}")
                     if attempt < self.max_retries - 1:
-                        backoff = self.initial_backoff * (2 ** attempt)
+                        backoff = self.initial_backoff * (2**attempt)
                         logger.info(f"Retrying DNS for {domain} after {backoff:.1f}s")
                         time.sleep(backoff)
                         continue
@@ -168,9 +168,11 @@ class RateLimitedFetcher:
                         return None
 
             except Exception as e:
-                logger.error(f"DNS extraction error for {domain} (attempt {attempt+1}): {e}")
+                logger.error(
+                    f"DNS extraction error for {domain} (attempt {attempt+1}): {e}"
+                )
                 if attempt < self.max_retries - 1:
-                    backoff = self.initial_backoff * (2 ** attempt)
+                    backoff = self.initial_backoff * (2**attempt)
                     time.sleep(backoff)
                 else:
                     self.dns_failed += 1
@@ -211,13 +213,13 @@ class RateLimitedFetcher:
                 features = extract_single_whois_features(url)
 
                 # Validate features
-                if self._validate_features(features, 'whois'):
+                if self._validate_features(features, "whois"):
                     self.whois_success += 1
                     return features
                 else:
                     logger.warning(f"WHOIS features invalid for {domain}")
                     if attempt < self.max_retries - 1:
-                        backoff = self.initial_backoff * (2 ** attempt)
+                        backoff = self.initial_backoff * (2**attempt)
                         logger.info(f"Retrying WHOIS for {domain} after {backoff:.1f}s")
                         time.sleep(backoff)
                         continue
@@ -226,9 +228,11 @@ class RateLimitedFetcher:
                         return None
 
             except Exception as e:
-                logger.error(f"WHOIS extraction error for {domain} (attempt {attempt+1}): {e}")
+                logger.error(
+                    f"WHOIS extraction error for {domain} (attempt {attempt+1}): {e}"
+                )
                 if attempt < self.max_retries - 1:
-                    backoff = self.initial_backoff * (2 ** attempt)
+                    backoff = self.initial_backoff * (2**attempt)
                     time.sleep(backoff)
                 else:
                     self.whois_failed += 1
@@ -248,8 +252,8 @@ class RateLimitedFetcher:
             Dict with 'dns' and 'whois' keys containing feature dicts or None
         """
         return {
-            'dns': self.fetch_dns_features(url),
-            'whois': self.fetch_whois_features(url)
+            "dns": self.fetch_dns_features(url),
+            "whois": self.fetch_whois_features(url),
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -258,27 +262,29 @@ class RateLimitedFetcher:
         whois_total = self.whois_success + self.whois_failed
 
         return {
-            'dns': {
-                'success': self.dns_success,
-                'failed': self.dns_failed,
-                'total': dns_total,
-                'success_rate': self.dns_success / dns_total if dns_total > 0 else 0.0
+            "dns": {
+                "success": self.dns_success,
+                "failed": self.dns_failed,
+                "total": dns_total,
+                "success_rate": self.dns_success / dns_total if dns_total > 0 else 0.0,
             },
-            'whois': {
-                'success': self.whois_success,
-                'failed': self.whois_failed,
-                'total': whois_total,
-                'success_rate': self.whois_success / whois_total if whois_total > 0 else 0.0
-            }
+            "whois": {
+                "success": self.whois_success,
+                "failed": self.whois_failed,
+                "total": whois_total,
+                "success_rate": (
+                    self.whois_success / whois_total if whois_total > 0 else 0.0
+                ),
+            },
         }
 
     def print_stats(self):
         """Print fetcher statistics."""
         stats = self.get_stats()
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("RATE-LIMITED FETCHER STATISTICS")
-        print("="*60)
+        print("=" * 60)
 
         print(f"\nDNS Features:")
         print(f"  Success: {stats['dns']['success']}")
@@ -292,7 +298,7 @@ class RateLimitedFetcher:
         print(f"  Total:   {stats['whois']['total']}")
         print(f"  Success Rate: {stats['whois']['success_rate']:.1%}")
 
-        print("="*60)
+        print("=" * 60)
 
 
 # Example usage
@@ -303,13 +309,11 @@ if __name__ == "__main__":
         "https://github.com",
         "https://stackoverflow.com",
         "https://stripe.io",
-        "https://kubernetes.io"
+        "https://kubernetes.io",
     ]
 
     fetcher = RateLimitedFetcher(
-        dns_rate=2.0,  # 2 req/s
-        whois_rate=1.0,  # 1 req/s
-        max_retries=3
+        dns_rate=2.0, whois_rate=1.0, max_retries=3  # 2 req/s  # 1 req/s
     )
 
     print("Testing rate-limited fetcher on 5 sample URLs...\n")

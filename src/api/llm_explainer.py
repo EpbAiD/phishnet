@@ -59,7 +59,7 @@ def load_explainer_model():
         MODEL_ID,
         torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         device_map="auto" if torch.cuda.is_available() else "cpu",
-        trust_remote_code=True
+        trust_remote_code=True,
     )
     print("✅ Qwen2.5-0.5B loaded successfully (using prompt engineering)")
 
@@ -74,7 +74,7 @@ def generate_explanation(
     domain: str,
     predictions: Dict,
     top_features: Optional[Dict] = None,
-    ground_truth: Optional[str] = None
+    ground_truth: Optional[str] = None,
 ) -> str:
     """
     Generate a human-readable explanation for a phishing detection result.
@@ -136,9 +136,9 @@ def generate_explanation(
 
         # Determine confidence
         confidence = (
-            "HIGH" if abs(ensemble_prob - 0.5) > 0.3
-            else "MEDIUM" if abs(ensemble_prob - 0.5) > 0.15
-            else "LOW"
+            "HIGH"
+            if abs(ensemble_prob - 0.5) > 0.3
+            else "MEDIUM" if abs(ensemble_prob - 0.5) > 0.15 else "LOW"
         )
 
         # Extract evidence from Feature Importance + Feature Values (from ALL THREE models)
@@ -161,16 +161,39 @@ def generate_explanation(
                         # If verdict is legit and this is an important feature, it's likely a trust signal
 
                         # For now, classify based on common patterns
-                        is_negative = any(keyword in plain_text.lower() for keyword in [
-                            "suspicious", "recently registered", "short", "random", "trick",
-                            "multiple", "unusual", "brand name", "imperson", "scam", "ip address",
-                            "privacy protection", "abuse", "free registration", "many"
-                        ])
+                        is_negative = any(
+                            keyword in plain_text.lower()
+                            for keyword in [
+                                "suspicious",
+                                "recently registered",
+                                "short",
+                                "random",
+                                "trick",
+                                "multiple",
+                                "unusual",
+                                "brand name",
+                                "imperson",
+                                "scam",
+                                "ip address",
+                                "privacy protection",
+                                "abuse",
+                                "free registration",
+                                "many",
+                            ]
+                        )
 
-                        is_positive = any(keyword in plain_text.lower() for keyword in [
-                            "https", "several years", "normal", "standard", "legitimate",
-                            "does not", "low risk"
-                        ])
+                        is_positive = any(
+                            keyword in plain_text.lower()
+                            for keyword in [
+                                "https",
+                                "several years",
+                                "normal",
+                                "standard",
+                                "legitimate",
+                                "does not",
+                                "low risk",
+                            ]
+                        )
 
                         if is_negative:
                             red_flags.append(plain_text)
@@ -186,35 +209,72 @@ def generate_explanation(
         # Fallback to basic URL analysis if no SHAP features available
         if not red_flags and not trust_signals:
             from urllib.parse import urlparse
+
             parsed = urlparse(url)
             domain_lower = domain.lower()
 
             # Basic URL-only checks as fallback
-            brand_names = ['paypal', 'amazon', 'google', 'microsoft', 'apple', 'facebook', 'netflix', 'bank']
-            subdomain_parts = domain.split('.')[:-2] if domain.count('.') >= 2 else []
-            has_brand_in_subdomain = any(brand in '-'.join(subdomain_parts).lower() for brand in brand_names)
+            brand_names = [
+                "paypal",
+                "amazon",
+                "google",
+                "microsoft",
+                "apple",
+                "facebook",
+                "netflix",
+                "bank",
+            ]
+            subdomain_parts = domain.split(".")[:-2] if domain.count(".") >= 2 else []
+            has_brand_in_subdomain = any(
+                brand in "-".join(subdomain_parts).lower() for brand in brand_names
+            )
 
             if has_brand_in_subdomain and url_prob and url_prob > 0.5:
-                brand_found = next(brand for brand in brand_names if brand in domain_lower)
-                red_flags.append(f"the URL contains '{brand_found}' but isn't the official {brand_found.title()} website")
+                brand_found = next(
+                    brand for brand in brand_names if brand in domain_lower
+                )
+                red_flags.append(
+                    f"the URL contains '{brand_found}' but isn't the official {brand_found.title()} website"
+                )
 
-            tld = domain.split('.')[-1]
-            suspicious_tlds = ['xyz', 'top', 'tk', 'ml', 'ga', 'cf', 'gq', 'work', 'click', 'link']
+            tld = domain.split(".")[-1]
+            suspicious_tlds = [
+                "xyz",
+                "top",
+                "tk",
+                "ml",
+                "ga",
+                "cf",
+                "gq",
+                "work",
+                "click",
+                "link",
+            ]
             if tld in suspicious_tlds:
-                red_flags.append(f"it uses a '.{tld}' domain extension often used by scammers")
+                red_flags.append(
+                    f"it uses a '.{tld}' domain extension often used by scammers"
+                )
 
             if len(domain) > 30:
-                red_flags.append(f"the domain name is unusually long ({len(domain)} characters)")
+                red_flags.append(
+                    f"the domain name is unusually long ({len(domain)} characters)"
+                )
 
-            hyphen_count = domain.count('-')
+            hyphen_count = domain.count("-")
             if hyphen_count >= 2:
-                red_flags.append(f"the domain has multiple hyphens ({hyphen_count}), which is uncommon for legitimate sites")
+                red_flags.append(
+                    f"the domain has multiple hyphens ({hyphen_count}), which is uncommon for legitimate sites"
+                )
 
-            if parsed.hostname and parsed.hostname.replace('.', '').isdigit():
-                red_flags.append("it uses a raw IP address instead of a proper domain name")
+            if parsed.hostname and parsed.hostname.replace(".", "").isdigit():
+                red_flags.append(
+                    "it uses a raw IP address instead of a proper domain name"
+                )
 
             if not red_flags and url_prob and url_prob < 0.3:
-                trust_signals.append("the website address follows normal naming patterns")
+                trust_signals.append(
+                    "the website address follows normal naming patterns"
+                )
 
             if url_prob and url_prob > 0.5 and not red_flags:
                 red_flags.append("the URL structure has suspicious characteristics")
@@ -228,10 +288,18 @@ def generate_explanation(
         user_verdict = "SUSPICIOUS" if verdict == "phishing" else "SAFE"
 
         if verdict == "phishing":
-            reasons = ' and '.join(red_flags[:3]) if red_flags else "several warning signs in how it's set up"
+            reasons = (
+                " and ".join(red_flags[:3])
+                if red_flags
+                else "several warning signs in how it's set up"
+            )
             example_start = f"🚨 This website is SUSPICIOUS. We detected {reasons}. Do not click this link or enter any personal information."
         else:
-            reasons = ' and '.join(trust_signals[:3]) if trust_signals else "no major red flags"
+            reasons = (
+                " and ".join(trust_signals[:3])
+                if trust_signals
+                else "no major red flags"
+            )
             example_start = f"✅ This website appears SAFE. We found {reasons}. You can proceed, but always be cautious with personal information."
 
         prompt = f"""<|im_start|>system
@@ -261,7 +329,7 @@ Is this website safe? {url}<|im_end|>
                 do_sample=DO_SAMPLE,
                 top_p=TOP_P,
                 pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id
+                eos_token_id=tokenizer.eos_token_id,
             )
 
         # Decode with special tokens first to find the assistant's response
@@ -277,7 +345,10 @@ Is this website safe? {url}<|im_end|>
             response = tokenizer.decode(outputs[0], skip_special_tokens=True)
             # Remove the input prompt (everything before "This URL has been classified")
             if "This URL has been classified" in response:
-                response = "This URL has been classified" + response.split("This URL has been classified")[-1]
+                response = (
+                    "This URL has been classified"
+                    + response.split("This URL has been classified")[-1]
+                )
 
         return response
 
@@ -296,9 +367,9 @@ def generate_fallback_explanation(url: str, predictions: Dict) -> str:
     ensemble_prob = predictions.get("ensemble_prob", 0.0)
 
     confidence = (
-        "high" if abs(ensemble_prob - 0.5) > 0.3
-        else "medium" if abs(ensemble_prob - 0.5) > 0.15
-        else "low"
+        "high"
+        if abs(ensemble_prob - 0.5) > 0.3
+        else "medium" if abs(ensemble_prob - 0.5) > 0.15 else "low"
     )
 
     explanation = f"Analysis of URL: {url}\n\n"
@@ -356,29 +427,23 @@ if __name__ == "__main__":
         "dns_prob": 0.85,
         "whois_prob": 0.78,
         "ensemble_prob": 0.85,
-        "verdict": "phishing"
+        "verdict": "phishing",
     }
 
     test_features = {
         "url": [
             {"feature": "suspicious_tld", "value": 1.0, "shap_contribution": 0.32},
-            {"feature": "brand_in_subdomain", "value": 1.0, "shap_contribution": 0.28}
+            {"feature": "brand_in_subdomain", "value": 1.0, "shap_contribution": 0.28},
         ],
-        "dns": [
-            {"feature": "short_ttl", "value": 300.0, "shap_contribution": 0.15}
-        ],
+        "dns": [{"feature": "short_ttl", "value": 300.0, "shap_contribution": 0.15}],
         "whois": [
             {"feature": "domain_age_days", "value": 5.0, "shap_contribution": 0.25}
-        ]
+        ],
     }
 
     print("Generating explanation...\n")
     explanation = generate_explanation(
-        test_url,
-        test_domain,
-        test_predictions,
-        test_features,
-        ground_truth="phishing"
+        test_url, test_domain, test_predictions, test_features, ground_truth="phishing"
     )
 
     print("=" * 80)

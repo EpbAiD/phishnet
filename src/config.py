@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     api_reload: bool = Field(default=False, description="Enable auto-reload")
 
     # CORS Settings
-    cors_origins: str = Field(default="*", description="Allowed CORS origins (comma-separated)")
+    cors_origins: str = Field(
+        default="*", description="Allowed CORS origins (comma-separated)"
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -33,13 +35,17 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     rate_limit_requests: int = Field(default=100, description="Max requests per window")
-    rate_limit_window: int = Field(default=60, description="Rate limit window in seconds")
+    rate_limit_window: int = Field(
+        default=60, description="Rate limit window in seconds"
+    )
 
     # Model Configuration
     model_dir: Path = Field(default=Path("models"), description="Model directory")
     model_version: str = Field(default="v1.0.0", description="Model version")
     url_model_name: str = Field(default="url_catboost", description="URL model name")
-    whois_model_name: str = Field(default="whois_catboost", description="WHOIS model name")
+    whois_model_name: str = Field(
+        default="whois_catboost", description="WHOIS model name"
+    )
     dns_model_name: str = Field(default="dns_catboost", description="DNS model name")
 
     @property
@@ -58,9 +64,15 @@ class Settings(BaseSettings):
         return self.model_dir / f"{self.dns_model_name}.pkl"
 
     # Ensemble Weights
-    ensemble_url_weight: float = Field(default=0.6, description="URL model weight in ensemble")
-    ensemble_whois_weight: float = Field(default=0.4, description="WHOIS model weight in ensemble")
-    ensemble_dns_weight: float = Field(default=0.0, description="DNS model weight in ensemble")
+    ensemble_url_weight: float = Field(
+        default=0.6, description="URL model weight in ensemble"
+    )
+    ensemble_whois_weight: float = Field(
+        default=0.4, description="WHOIS model weight in ensemble"
+    )
+    ensemble_dns_weight: float = Field(
+        default=0.0, description="DNS model weight in ensemble"
+    )
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
@@ -73,7 +85,9 @@ class Settings(BaseSettings):
 
     # Data Paths
     data_dir: Path = Field(default=Path("data"), description="Data directory")
-    processed_data_dir: Path = Field(default=Path("data/processed"), description="Processed data directory")
+    processed_data_dir: Path = Field(
+        default=Path("data/processed"), description="Processed data directory"
+    )
 
     # Cache Configuration
     enable_model_cache: bool = Field(default=True, description="Enable model caching")
@@ -84,7 +98,9 @@ class Settings(BaseSettings):
     metrics_port: int = Field(default=9090, description="Prometheus metrics port")
 
     # Security
-    api_key_enabled: bool = Field(default=False, description="Enable API key authentication")
+    api_key_enabled: bool = Field(
+        default=False, description="Enable API key authentication"
+    )
     api_key_header: str = Field(default="X-API-Key", description="API key header name")
 
     class Config:

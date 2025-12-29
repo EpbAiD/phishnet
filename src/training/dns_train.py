@@ -119,11 +119,13 @@ def train_all_dns_models(subset: list[str] | None = None):
             raise ValueError("❌ 'label' column missing in DNS feature datasets!")
         df["label"] = df["label"].astype(str).str.lower()
         # Collapse 'legit' variants into 'legitimate'
-        df["label"] = df["label"].replace({
-            "legit": "legitimate",
-            "Legit": "legitimate",
-            "Legitimate": "legitimate",
-        })
+        df["label"] = df["label"].replace(
+            {
+                "legit": "legitimate",
+                "Legit": "legitimate",
+                "Legitimate": "legitimate",
+            }
+        )
 
     # Check alignment
     if set(df_main.columns) != set(df_imp.columns):
@@ -221,6 +223,7 @@ if __name__ == "__main__":
 
     # CLEANUP: Remove old DNS models before training
     import glob
+
     old_models = glob.glob(f"{MODELDIR}/dns_*.pkl")
     if old_models:
         print(f"🗑️  Removing {len(old_models)} old DNS models...")
@@ -237,6 +240,8 @@ if __name__ == "__main__":
     # 3. Ensemble-Boosting: catboost, lgbm, xgb
     # 4. Kernel: svm_rbf (if dataset allows)
     # 5. Neural: mlp
-    results = train_all_dns_models(subset=["logreg_elasticnet", "rf", "catboost", "lgbm", "xgb", "svm_rbf", "mlp"])
+    results = train_all_dns_models(
+        subset=["logreg_elasticnet", "rf", "catboost", "lgbm", "xgb", "svm_rbf", "mlp"]
+    )
     print("\n🎯 Completed. Top results:")
     print(results.head(10))

@@ -70,7 +70,9 @@ def get_credential_bucket():
     else:
         source = "openphish_only"
 
-    return pd.DataFrame({"url": list(urls), "label": "phishing", "bucket": "credential_" + source})
+    return pd.DataFrame(
+        {"url": list(urls), "label": "phishing", "bucket": "credential_" + source}
+    )
 
 
 def get_malware_bucket():
@@ -78,7 +80,9 @@ def get_malware_bucket():
 
     # URLHaus
     try:
-        t = requests.get("https://urlhaus.abuse.ch/downloads/csv_recent/", timeout=20).text
+        t = requests.get(
+            "https://urlhaus.abuse.ch/downloads/csv_recent/", timeout=20
+        ).text
         rows = [r.split(",") for r in t.splitlines() if "http" in r]
         urls.update([r[2].strip('"') for r in rows if len(r) > 2])
     except:
@@ -105,7 +109,8 @@ def get_tranco_bucket():
     try:
         with NamedTemporaryFile(suffix=".zip") as tmp:
             r = requests.get("https://tranco-list.eu/top-1m.csv.zip", timeout=20)
-            tmp.write(r.content); tmp.flush()
+            tmp.write(r.content)
+            tmp.flush()
             with ZipFile(tmp.name) as z:
                 name = z.namelist()[0]
                 with z.open(name) as f:
@@ -291,7 +296,7 @@ if __name__ == "__main__":
         get_malware_bucket(),
         get_majestic_bucket(),
         get_tranco_bucket(),
-        get_modern_tech_bucket()
+        get_modern_tech_bucket(),
     ]
 
     # Sample each bucket equally
@@ -304,4 +309,4 @@ if __name__ == "__main__":
     final_df.to_csv(OUT_PATH, index=False)
     print(f"\n🎉 FINAL BALANCED DATASET READY → {OUT_PATH}")
     print(f"📌 Total URLs: {len(final_df):,}")
-    print(final_df.groupby(['label', 'bucket']).size())
+    print(final_df.groupby(["label", "bucket"]).size())

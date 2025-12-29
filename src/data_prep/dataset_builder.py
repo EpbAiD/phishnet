@@ -38,9 +38,15 @@ OUT_URL_MODELREADY = os.path.join(BASE_DIR, "processed/url_features_modelready.c
 OUT_DNS_MODELREADY = os.path.join(BASE_DIR, "processed/dns_features_modelready.csv")
 OUT_WHOIS_MODELREADY = os.path.join(BASE_DIR, "processed/whois_features_modelready.csv")
 
-OUT_URL_MODELREADY_IMPUTED = os.path.join(BASE_DIR, "processed/url_features_modelready_imputed.csv")
-OUT_DNS_MODELREADY_IMPUTED = os.path.join(BASE_DIR, "processed/dns_features_modelready_imputed.csv")
-OUT_WHOIS_MODELREADY_IMPUTED = os.path.join(BASE_DIR, "processed/whois_features_modelready_imputed.csv")
+OUT_URL_MODELREADY_IMPUTED = os.path.join(
+    BASE_DIR, "processed/url_features_modelready_imputed.csv"
+)
+OUT_DNS_MODELREADY_IMPUTED = os.path.join(
+    BASE_DIR, "processed/dns_features_modelready_imputed.csv"
+)
+OUT_WHOIS_MODELREADY_IMPUTED = os.path.join(
+    BASE_DIR, "processed/whois_features_modelready_imputed.csv"
+)
 
 # Feature metadata for FastAPI
 FEATURE_METADATA = os.path.join(BASE_DIR, "processed/feature_metadata.json")
@@ -76,12 +82,14 @@ def flatten_listlike_columns(df: pd.DataFrame):
         if df[col].dtype == object:
             sample_val = str(df[col].dropna().iloc[0]) if df[col].notna().any() else ""
             if sample_val.startswith("[") and sample_val.endswith("]"):
+
                 def parse_count(x):
                     try:
                         parsed = ast.literal_eval(x)
                         return len(parsed) if isinstance(parsed, list) else 0
                     except Exception:
                         return 0
+
                 df[col] = df[col].apply(parse_count)
     return df
 
@@ -104,10 +112,10 @@ def normalize_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # Determine which column has the labels
     label_col = None
-    if 'label' in df_norm.columns:
-        label_col = 'label'
-    elif 'type' in df_norm.columns:
-        label_col = 'type'
+    if "label" in df_norm.columns:
+        label_col = "label"
+    elif "type" in df_norm.columns:
+        label_col = "type"
     else:
         print("⚠️  No 'label' or 'type' column found - skipping label normalization")
         return df_norm
@@ -117,30 +125,30 @@ def normalize_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # Map to binary labels
     label_map = {
-        'legitimate': 0,
-        'legit': 0,
-        'benign': 0,
-        '0': 0,
-        'phishing': 1,
-        'phish': 1,
-        'malicious': 1,
-        '1': 1
+        "legitimate": 0,
+        "legit": 0,
+        "benign": 0,
+        "0": 0,
+        "phishing": 1,
+        "phish": 1,
+        "malicious": 1,
+        "1": 1,
     }
 
     df_norm[label_col] = df_norm[label_col].map(label_map)
 
     # Rename to 'label' if it was 'type'
-    if label_col == 'type':
-        df_norm = df_norm.rename(columns={'type': 'label'})
+    if label_col == "type":
+        df_norm = df_norm.rename(columns={"type": "label"})
 
     # Check for unmapped values
-    if df_norm['label'].isna().any():
-        unmapped_count = df_norm['label'].isna().sum()
+    if df_norm["label"].isna().any():
+        unmapped_count = df_norm["label"].isna().sum()
         print(f"⚠️  Warning: {unmapped_count} rows with unmapped labels - dropping them")
-        df_norm = df_norm.dropna(subset=['label'])
+        df_norm = df_norm.dropna(subset=["label"])
 
     # Ensure label is integer
-    df_norm['label'] = df_norm['label'].astype(int)
+    df_norm["label"] = df_norm["label"].astype(int)
 
     print(f"✅ Labels normalized:")
     print(f"   Legitimate (0): {(df_norm['label'] == 0).sum()}")
@@ -201,7 +209,7 @@ def impute_single_feature_dict(features: dict) -> dict:
     for key, value in features.items():
         if value is None or (isinstance(value, float) and pd.isna(value)):
             # Numeric feature → use -999
-            if key not in ['url', 'type', 'domain']:
+            if key not in ["url", "type", "domain"]:
                 imputed[key] = -999
             else:
                 imputed[key] = "MISSING"
@@ -212,7 +220,9 @@ def impute_single_feature_dict(features: dict) -> dict:
     return imputed
 
 
-def preprocess_features_for_inference(url_features: dict, dns_features: dict = None, whois_features: dict = None) -> dict:
+def preprocess_features_for_inference(
+    url_features: dict, dns_features: dict = None, whois_features: dict = None
+) -> dict:
     """
     Preprocess raw feature dictionaries for FastAPI model inference.
     Applies the SAME transformations as training pipeline:
@@ -256,7 +266,7 @@ def summarize_dataset(df: pd.DataFrame, label: str):
     print(f"\n📊 ===== Summary for {label} =====")
     print(f"Total rows: {len(df):,}")
     print(f"Total columns: {len(df.columns):,}")
-    feature_cols = [c for c in df.columns if c not in ['url', 'type']]
+    feature_cols = [c for c in df.columns if c not in ["url", "type"]]
     print(f"Feature columns: {len(feature_cols)}")
     print(f"Missing value ratio (avg): {df.isna().mean().mean():.3f}")
     print("Sample columns:", list(df.columns[:10]))
@@ -264,15 +274,19 @@ def summarize_dataset(df: pd.DataFrame, label: str):
 
 
 # ----------------------------- Core Merge -----------------------------
-def _merge_and_prepare(feature_df: pd.DataFrame, url_df: pd.DataFrame, out_path_base: str, label: str):
+def _merge_and_prepare(
+    feature_df: pd.DataFrame, url_df: pd.DataFrame, out_path_base: str, label: str
+):
     """Merge, flatten, preserve missingness, save dual versions."""
-    merged = url_df.merge(feature_df, on="domain", how="left", suffixes=('', '_feature'))
+    merged = url_df.merge(
+        feature_df, on="domain", how="left", suffixes=("", "_feature")
+    )
 
     # Clean up duplicate label columns from merge
-    if 'label_feature' in merged.columns:
-        merged = merged.drop(columns=['label_feature'])
-    if 'url_feature' in merged.columns:
-        merged = merged.drop(columns=['url_feature'])
+    if "label_feature" in merged.columns:
+        merged = merged.drop(columns=["label_feature"])
+    if "url_feature" in merged.columns:
+        merged = merged.drop(columns=["url_feature"])
 
     # Normalize labels to binary 0/1
     print(f"\n🔄 Normalizing labels for {label}...")
@@ -303,38 +317,45 @@ def save_feature_metadata(url_df, dns_df=None, whois_df=None):
     This ensures FastAPI provides features in the exact same order as training.
     """
     # Get feature columns (exclude url, type, domain)
-    url_features = [c for c in url_df.columns if c not in ['url', 'type', 'domain']]
-    dns_features = [c for c in dns_df.columns if c not in ['url', 'type', 'domain']] if dns_df is not None else []
-    whois_features = [c for c in whois_df.columns if c not in ['url', 'type', 'domain']] if whois_df is not None else []
+    url_features = [c for c in url_df.columns if c not in ["url", "type", "domain"]]
+    dns_features = (
+        [c for c in dns_df.columns if c not in ["url", "type", "domain"]]
+        if dns_df is not None
+        else []
+    )
+    whois_features = (
+        [c for c in whois_df.columns if c not in ["url", "type", "domain"]]
+        if whois_df is not None
+        else []
+    )
 
     metadata = {
         "feature_order": {
             "url": url_features,
             "dns": dns_features,
             "whois": whois_features,
-            "all": url_features + dns_features + whois_features
+            "all": url_features + dns_features + whois_features,
         },
         "feature_counts": {
             "url": len(url_features),
             "dns": len(dns_features),
             "whois": len(whois_features),
-            "total": len(url_features) + len(dns_features) + len(whois_features)
+            "total": len(url_features) + len(dns_features) + len(whois_features),
         },
-        "imputation_strategy": {
-            "numeric": -999,
-            "categorical": "MISSING"
-        },
-        "list_flattening": "Convert lists to counts (len(list))"
+        "imputation_strategy": {"numeric": -999, "categorical": "MISSING"},
+        "list_flattening": "Convert lists to counts (len(list))",
     }
 
-    with open(FEATURE_METADATA, 'w') as f:
+    with open(FEATURE_METADATA, "w") as f:
         json.dump(metadata, f, indent=2)
 
     print(f"💾 Saved feature metadata → {FEATURE_METADATA}")
     print(f"   URL features: {len(url_features)}")
     print(f"   DNS features: {len(dns_features)}")
     print(f"   WHOIS features: {len(whois_features)}")
-    print(f"   TOTAL: {len(url_features) + len(dns_features) + len(whois_features)} features")
+    print(
+        f"   TOTAL: {len(url_features) + len(dns_features) + len(whois_features)} features"
+    )
     return metadata
 
 
@@ -344,10 +365,12 @@ def build_url_modelready():
     url_feats = safe_load(URL_FEATURE_PATH, "URL Features")
 
     if url_feats is None:
-        raise RuntimeError("❌ URL features missing! Run extraction before model-ready step.")
+        raise RuntimeError(
+            "❌ URL features missing! Run extraction before model-ready step."
+        )
 
-    if 'type' not in url_feats.columns and 'type' in url_main.columns:
-        url_feats = url_feats.merge(url_main[['url', 'type']], on='url', how='left')
+    if "type" not in url_feats.columns and "type" in url_main.columns:
+        url_feats = url_feats.merge(url_main[["url", "type"]], on="url", how="left")
 
     # EXTRACT URL features from VM collected DNS/WHOIS results (LOCAL extraction - instant!)
     # VM only collects DNS/WHOIS (slow, rate-limited). URL features extracted here (fast, no APIs)
@@ -356,25 +379,28 @@ def build_url_modelready():
 
     vm_urls = []
     if vm_dns_df is not None and len(vm_dns_df) > 0:
-        if 'url' in vm_dns_df.columns:
-            vm_urls.extend(vm_dns_df[['url', 'label']].to_dict('records'))
+        if "url" in vm_dns_df.columns:
+            vm_urls.extend(vm_dns_df[["url", "label"]].to_dict("records"))
     if vm_whois_df is not None and len(vm_whois_df) > 0:
-        if 'url' in vm_whois_df.columns:
-            vm_urls.extend(vm_whois_df[['url', 'label']].to_dict('records'))
+        if "url" in vm_whois_df.columns:
+            vm_urls.extend(vm_whois_df[["url", "label"]].to_dict("records"))
 
     if vm_urls:
         # Remove duplicates
-        vm_urls_df = pd.DataFrame(vm_urls).drop_duplicates(subset=['url'])
-        print(f"  📥 Extracting URL features for {len(vm_urls_df)} VM collected URLs (LOCAL extraction - instant)...")
+        vm_urls_df = pd.DataFrame(vm_urls).drop_duplicates(subset=["url"])
+        print(
+            f"  📥 Extracting URL features for {len(vm_urls_df)} VM collected URLs (LOCAL extraction - instant)..."
+        )
 
         # Extract URL features locally (instant, no APIs needed)
         from src.features.url_features import extract_single_url_features
+
         vm_url_features = []
         for _, row in vm_urls_df.iterrows():
             try:
-                feats = extract_single_url_features(row['url'])
-                feats['url'] = row['url']
-                feats['label'] = row['label']
+                feats = extract_single_url_features(row["url"])
+                feats["url"] = row["url"]
+                feats["label"] = row["label"]
                 vm_url_features.append(feats)
             except Exception as e:
                 print(f"  ⚠️  Error extracting features for {row['url']}: {e}")
@@ -383,7 +409,7 @@ def build_url_modelready():
             vm_url_df = pd.DataFrame(vm_url_features)
             # Merge with original URL features (keep latest)
             url_feats = pd.concat([url_feats, vm_url_df], ignore_index=True)
-            url_feats = url_feats.drop_duplicates(subset=['url'], keep='last')
+            url_feats = url_feats.drop_duplicates(subset=["url"], keep="last")
             print(f"  ✅ Total URL features after merge: {len(url_feats)}")
 
     # Normalize labels to binary 0/1
@@ -415,10 +441,14 @@ def build_dns_modelready():
         print(f"  📥 Merging {len(vm_dns_df)} VM collected DNS rows...")
         # VM data has url/label/domain - keep only feature columns that match original
         # Drop url, label from VM data to avoid conflicts
-        vm_dns_clean = vm_dns_df.drop(columns=['url', 'label', 'collected_at'], errors='ignore')
+        vm_dns_clean = vm_dns_df.drop(
+            columns=["url", "label", "collected_at"], errors="ignore"
+        )
         # Concatenate feature-only data
         dns_df = pd.concat([dns_df, vm_dns_clean], ignore_index=True)
-        dns_df = dns_df.drop_duplicates(subset=['domain'], keep='last')  # Keep latest version by domain
+        dns_df = dns_df.drop_duplicates(
+            subset=["domain"], keep="last"
+        )  # Keep latest version by domain
         print(f"  ✅ Total DNS rows after merge: {len(dns_df)}")
 
     url_df = pd.read_csv(RAW_URL_PATH)
@@ -441,12 +471,16 @@ def build_whois_modelready():
     if vm_whois_df is not None and len(vm_whois_df) > 0:
         print(f"  📥 Merging {len(vm_whois_df)} VM collected WHOIS rows...")
         # Extract domain from VM WHOIS url column first
-        vm_whois_df['domain'] = vm_whois_df['url'].apply(extract_domain)
+        vm_whois_df["domain"] = vm_whois_df["url"].apply(extract_domain)
         # Drop url, label from VM data to avoid conflicts
-        vm_whois_clean = vm_whois_df.drop(columns=['url', 'label', 'collected_at'], errors='ignore')
+        vm_whois_clean = vm_whois_df.drop(
+            columns=["url", "label", "collected_at"], errors="ignore"
+        )
         # Concatenate feature-only data
         whois_df = pd.concat([whois_df, vm_whois_clean], ignore_index=True)
-        whois_df = whois_df.drop_duplicates(subset=['domain'], keep='last')  # Keep latest version by domain
+        whois_df = whois_df.drop_duplicates(
+            subset=["domain"], keep="last"
+        )  # Keep latest version by domain
         print(f"  ✅ Total WHOIS rows after merge: {len(whois_df)}")
 
     url_df = pd.read_csv(RAW_URL_PATH)
@@ -469,7 +503,7 @@ if __name__ == "__main__":
     save_feature_metadata(
         url_df_imp if url_df_imp is not None else url_df,
         dns_df_imp if dns_df_imp is not None else dns_df,
-        whois_df_imp if whois_df_imp is not None else whois_df
+        whois_df_imp if whois_df_imp is not None else whois_df,
     )
 
     print("\n🎯 Completed model-ready generation (safe mode).")

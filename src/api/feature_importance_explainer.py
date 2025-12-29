@@ -30,7 +30,6 @@ URL_FEATURE_TRANSLATIONS = {
     "num_ampersand": "has multiple ampersands",
     "num_hash": "has multiple hash symbols",
     "num_at": "uses @ symbol (a redirection trick)",
-
     # Suspicious patterns
     "suspicious_tld": "uses a suspicious domain extension",
     "brand_in_subdomain": "contains a brand name in a suspicious position",
@@ -40,11 +39,9 @@ URL_FEATURE_TRANSLATIONS = {
     "has_login_keyword": "contains login-related keywords",
     "has_secure_keyword": "contains security-related keywords",
     "has_brand_name": "mentions a popular brand name",
-
     # Entropy and randomness
     "domain_entropy": "has random-looking characters in the domain",
     "path_entropy": "has random-looking characters in the path",
-
     # Protocol
     "is_https": "uses HTTPS protocol",
     "port_in_url": "specifies a custom port number",
@@ -57,16 +54,13 @@ DNS_FEATURE_TRANSLATIONS = {
     "min_ttl": "has very short DNS cache time",
     "max_ttl": "has unusual DNS cache time",
     "avg_ttl": "has suspicious DNS cache settings",
-
     # IP features
     "num_ips": "resolves to multiple IP addresses",
     "num_unique_countries": "has servers in multiple countries",
     "has_private_ip": "uses a private IP address",
-
     # ASN features
     "asn_reputation_score": "is hosted by a provider with poor reputation",
     "is_cloud_provider": "is hosted on cloud infrastructure",
-
     # Geographic
     "country_risk_score": "is hosted in a high-risk country",
     "multiple_nameservers": "uses multiple nameservers",
@@ -78,16 +72,13 @@ WHOIS_FEATURE_TRANSLATIONS = {
     "domain_age_days": "domain registration age",
     "days_until_expiry": "days until domain expires",
     "registration_length_days": "registration period length",
-
     # Status features
     "is_recently_registered": "was registered very recently",
     "expires_soon": "is about to expire",
     "is_privacy_protected": "uses privacy protection to hide owner information",
-
     # Registrar features
     "registrar_abuse_score": "is registered with a provider known for abuse",
     "free_registration": "uses a free domain registration service",
-
     # Update features
     "recently_updated": "was recently updated",
     "update_frequency": "has been updated frequently",
@@ -97,7 +88,10 @@ WHOIS_FEATURE_TRANSLATIONS = {
 # Feature Importance Extraction
 # ---------------------------------------------------------------
 
-def get_feature_importance(model, feature_names: List[str], top_n: int = 10) -> List[Dict]:
+
+def get_feature_importance(
+    model, feature_names: List[str], top_n: int = 10
+) -> List[Dict]:
     """
     Extract feature importance from tree-based model.
 
@@ -111,9 +105,9 @@ def get_feature_importance(model, feature_names: List[str], top_n: int = 10) -> 
     """
     try:
         # Get feature importance
-        if hasattr(model, 'feature_importances_'):
+        if hasattr(model, "feature_importances_"):
             importances = model.feature_importances_
-        elif hasattr(model, 'get_feature_importance'):
+        elif hasattr(model, "get_feature_importance"):
             # CatBoost
             importances = model.get_feature_importance()
         else:
@@ -126,10 +120,12 @@ def get_feature_importance(model, feature_names: List[str], top_n: int = 10) -> 
         top_features = []
         for idx in indices:
             if idx < len(feature_names):
-                top_features.append({
-                    "feature": feature_names[idx],
-                    "importance": float(importances[idx])
-                })
+                top_features.append(
+                    {
+                        "feature": feature_names[idx],
+                        "importance": float(importances[idx]),
+                    }
+                )
 
         return top_features
     except Exception as e:
@@ -138,9 +134,7 @@ def get_feature_importance(model, feature_names: List[str], top_n: int = 10) -> 
 
 
 def translate_feature_value_to_plain_language(
-    feature_name: str,
-    feature_value: float,
-    model_type: str
+    feature_name: str, feature_value: float, model_type: str
 ) -> str:
     """
     Translate a feature name and value to layperson-friendly language.
@@ -259,10 +253,7 @@ def translate_feature_value_to_plain_language(
 
 
 def extract_important_features_with_values(
-    model,
-    X: pd.DataFrame,
-    model_type: str,
-    top_n: int = 5
+    model, X: pd.DataFrame, model_type: str, top_n: int = 5
 ) -> List[Dict]:
     """
     Extract top important features and their values for this specific URL.
@@ -304,12 +295,14 @@ def extract_important_features_with_values(
                     feat_name, feat_value, model_type
                 )
 
-                result.append({
-                    "feature": feat_name,
-                    "value": feat_value,
-                    "importance": feat_info["importance"],
-                    "plain_language": plain_language
-                })
+                result.append(
+                    {
+                        "feature": feat_name,
+                        "value": feat_value,
+                        "importance": feat_info["importance"],
+                        "plain_language": plain_language,
+                    }
+                )
 
         return result
 
@@ -334,7 +327,7 @@ DEFAULT_IMPORTANT_FEATURES = {
         "has_at_symbol",
         "num_dots",
         "has_punycode",
-        "path_entropy"
+        "path_entropy",
     ],
     "dns": [
         "min_ttl",
@@ -343,7 +336,7 @@ DEFAULT_IMPORTANT_FEATURES = {
         "country_risk_score",
         "num_unique_countries",
         "has_private_ip",
-        "avg_ttl"
+        "avg_ttl",
     ],
     "whois": [
         "domain_age_days",
@@ -352,15 +345,13 @@ DEFAULT_IMPORTANT_FEATURES = {
         "is_privacy_protected",
         "registrar_abuse_score",
         "registration_length_days",
-        "free_registration"
-    ]
+        "free_registration",
+    ],
 }
 
 
 def extract_important_features_fallback(
-    X: pd.DataFrame,
-    model_type: str,
-    top_n: int = 5
+    X: pd.DataFrame, model_type: str, top_n: int = 5
 ) -> List[Dict]:
     """
     Fallback method using pre-defined important features.
@@ -383,12 +374,14 @@ def extract_important_features_fallback(
                     feat_name, feat_value, model_type
                 )
 
-                result.append({
-                    "feature": feat_name,
-                    "value": feat_value,
-                    "importance": 1.0,  # Not available in fallback
-                    "plain_language": plain_language
-                })
+                result.append(
+                    {
+                        "feature": feat_name,
+                        "value": feat_value,
+                        "importance": 1.0,  # Not available in fallback
+                        "plain_language": plain_language,
+                    }
+                )
 
         return result
 

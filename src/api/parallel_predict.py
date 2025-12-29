@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Global thread pool for async execution
 _executor = None
 
+
 def get_executor():
     """Get global thread pool executor"""
     global _executor
@@ -30,8 +31,8 @@ def get_executor():
 async def extract_all_features_parallel(
     url: str,
     timeout_whois: float = 0.1,  # 100ms
-    timeout_dns: float = 0.1,    # 100ms
-    use_cache: bool = True
+    timeout_dns: float = 0.1,  # 100ms
+    use_cache: bool = True,
 ) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
     """
     Extract all features in parallel with caching and timeout.
@@ -62,7 +63,9 @@ async def extract_all_features_parallel(
         Extract URL features (always fast, no timeout needed).
         """
         try:
-            return await loop.run_in_executor(executor, extract_single_url_features, url)
+            return await loop.run_in_executor(
+                executor, extract_single_url_features, url
+            )
         except Exception as e:
             logger.error(f"URL extraction failed for {url}: {e}")
             return None
@@ -83,7 +86,7 @@ async def extract_all_features_parallel(
             logger.debug(f"⚡ Fetching WHOIS: {url}")
             features = await asyncio.wait_for(
                 loop.run_in_executor(executor, extract_single_whois_features, url),
-                timeout=timeout_whois
+                timeout=timeout_whois,
             )
 
             # Cache successful result
@@ -115,7 +118,7 @@ async def extract_all_features_parallel(
             logger.debug(f"⚡ Fetching DNS: {url}")
             features = await asyncio.wait_for(
                 loop.run_in_executor(executor, extract_single_domain_features, url),
-                timeout=timeout_dns
+                timeout=timeout_dns,
             )
 
             # Cache successful result
@@ -139,7 +142,7 @@ async def extract_all_features_parallel(
         extract_url(),
         extract_whois_cached(),
         extract_dns_cached(),
-        return_exceptions=True
+        return_exceptions=True,
     )
 
     elapsed = (asyncio.get_event_loop().time() - start) * 1000  # ms
@@ -149,9 +152,12 @@ async def extract_all_features_parallel(
 
     # Log feature availability
     features_available = []
-    if url_feats: features_available.append("URL")
-    if whois_feats: features_available.append("WHOIS")
-    if dns_feats: features_available.append("DNS")
+    if url_feats:
+        features_available.append("URL")
+    if whois_feats:
+        features_available.append("WHOIS")
+    if dns_feats:
+        features_available.append("DNS")
 
     logger.info(f"   Features available: {', '.join(features_available) or 'None'}")
 
@@ -163,7 +169,7 @@ async def extract_features_batch(
     timeout_whois: float = 0.1,
     timeout_dns: float = 0.1,
     use_cache: bool = True,
-    max_concurrent: int = 10
+    max_concurrent: int = 10,
 ) -> list:
     """
     Extract features for multiple URLs in parallel.
@@ -182,9 +188,13 @@ async def extract_features_batch(
 
     async def extract_with_limit(url):
         async with semaphore:
-            return await extract_all_features_parallel(url, timeout_whois, timeout_dns, use_cache)
+            return await extract_all_features_parallel(
+                url, timeout_whois, timeout_dns, use_cache
+            )
 
-    logger.info(f"🚀 Batch extracting features for {len(urls)} URLs (max {max_concurrent} concurrent)")
+    logger.info(
+        f"🚀 Batch extracting features for {len(urls)} URLs (max {max_concurrent} concurrent)"
+    )
     results = await asyncio.gather(*[extract_with_limit(url) for url in urls])
 
     return results

@@ -27,7 +27,7 @@ def compute_shap_importance(
     output_path: str,
     model_type: str,
     top_n: int = 10,
-    max_samples: int = 100
+    max_samples: int = 100,
 ):
     """
     Compute SHAP values on test data and save global feature importance.
@@ -46,13 +46,13 @@ def compute_shap_importance(
 
     # Load model
     print(f"📂 Loading model from: {model_path}")
-    with open(model_path, 'rb') as f:
+    with open(model_path, "rb") as f:
         model_data = pickle.load(f)
 
     if isinstance(model_data, dict):
-        model = model_data['model']
-        feature_cols = model_data['features']
-        threshold = model_data.get('threshold', 0.5)
+        model = model_data["model"]
+        feature_cols = model_data["features"]
+        threshold = model_data.get("threshold", 0.5)
     else:
         model = model_data
         feature_cols = None
@@ -65,24 +65,24 @@ def compute_shap_importance(
     df = pd.read_csv(test_data_path)
 
     # Get features and labels
-    if 'label' in df.columns:
-        X = df.drop(columns=['label'])
-        y = df['label']
-    elif 'is_phishing' in df.columns:
-        X = df.drop(columns=['is_phishing'])
-        y = df['is_phishing']
+    if "label" in df.columns:
+        X = df.drop(columns=["label"])
+        y = df["label"]
+    elif "is_phishing" in df.columns:
+        X = df.drop(columns=["is_phishing"])
+        y = df["is_phishing"]
     else:
         raise ValueError("No label column found in test data")
 
     # Drop non-feature columns (url, bucket, etc.)
-    non_feature_cols = ['url', 'bucket', 'Unnamed: 0']
+    non_feature_cols = ["url", "bucket", "Unnamed: 0"]
     for col in non_feature_cols:
         if col in X.columns:
             print(f"   Dropping non-feature column: {col}")
             X = X.drop(columns=[col])
 
     # If model has feature_names_, use those directly
-    if hasattr(model, 'feature_names_'):
+    if hasattr(model, "feature_names_"):
         print(f"\n✅ Using model's feature_names_ attribute")
         feature_cols = list(model.feature_names_)
         print(f"   Model expects {len(feature_cols)} features")
@@ -101,7 +101,7 @@ def compute_shap_importance(
 
     # Convert object columns to numeric (CatBoost handles NaN natively - preserve them!)
     for col in X.columns:
-        if X[col].dtype == 'object':
+        if X[col].dtype == "object":
             print(f"   Converting categorical column to numeric: {col}")
             X[col] = pd.Categorical(X[col]).codes
 
@@ -169,7 +169,7 @@ def compute_shap_importance(
         "num_samples": int(X_sample.shape[0]),
         "num_features": int(X_sample.shape[1]),
         "top_n": top_n,
-        "features": []
+        "features": [],
     }
 
     print(f"\n🏆 Top {top_n} Most Important Features (by mean |SHAP|):\n")
@@ -180,12 +180,14 @@ def compute_shap_importance(
         feat_name = X.columns[idx]
         importance = float(mean_abs_shap[idx])
 
-        feature_importance["features"].append({
-            "rank": rank,
-            "feature": feat_name,
-            "mean_abs_shap": importance,
-            "index": int(idx)
-        })
+        feature_importance["features"].append(
+            {
+                "rank": rank,
+                "feature": feat_name,
+                "mean_abs_shap": importance,
+                "index": int(idx),
+            }
+        )
 
         print(f"{rank:<6} {feat_name:<40} {importance:<12.6f}")
 
@@ -193,19 +195,19 @@ def compute_shap_importance(
     print(f"\n💾 Saving SHAP importance to: {output_path}")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(feature_importance, f, indent=2)
 
     print(f"✅ SHAP importance saved successfully!")
 
     # Also save SHAP values for later analysis (optional)
-    shap_values_path = output_path.replace('.json', '_values.npz')
+    shap_values_path = output_path.replace(".json", "_values.npz")
     print(f"\n💾 Saving raw SHAP values to: {shap_values_path}")
     np.savez_compressed(
         shap_values_path,
         shap_values=shap_vals,
         feature_names=X.columns.tolist(),
-        labels=y_sample.values
+        labels=y_sample.values,
     )
     print(f"✅ SHAP values saved for later analysis!")
 
@@ -227,13 +229,13 @@ def compute_all_models():
             "model_type": "url",
             "model_path": base_dir / "models" / "url_model.pkl",
             "test_data_path": base_dir / "data" / "processed" / "url_features.csv",
-            "output_path": base_dir / "models" / "shap_importance_url.json"
+            "output_path": base_dir / "models" / "shap_importance_url.json",
         },
         {
             "model_type": "whois",
             "model_path": base_dir / "models" / "whois_model.pkl",
             "test_data_path": base_dir / "data" / "processed" / "whois_features.csv",
-            "output_path": base_dir / "models" / "shap_importance_whois.json"
+            "output_path": base_dir / "models" / "shap_importance_whois.json",
         },
         # DNS commented out for now
         # {
@@ -264,12 +266,13 @@ def compute_all_models():
                 output_path=str(config["output_path"]),
                 model_type=config["model_type"],
                 top_n=10,
-                max_samples=100
+                max_samples=100,
             )
             results[config["model_type"]] = result
         except Exception as e:
             print(f"❌ Failed to compute SHAP for {config['model_type']}: {e}")
             import traceback
+
             traceback.print_exc()
             continue
 
@@ -279,13 +282,19 @@ def compute_all_models():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Compute SHAP importance from test data")
+    parser = argparse.ArgumentParser(
+        description="Compute SHAP importance from test data"
+    )
     parser.add_argument("--model", type=str, help="Model pickle file path")
     parser.add_argument("--test-data", type=str, help="Test data CSV path")
     parser.add_argument("--output", type=str, help="Output JSON path")
-    parser.add_argument("--model-type", type=str, choices=["url", "dns", "whois"], help="Model type")
+    parser.add_argument(
+        "--model-type", type=str, choices=["url", "dns", "whois"], help="Model type"
+    )
     parser.add_argument("--top-n", type=int, default=10, help="Number of top features")
-    parser.add_argument("--max-samples", type=int, default=100, help="Max samples for SHAP computation")
+    parser.add_argument(
+        "--max-samples", type=int, default=100, help="Max samples for SHAP computation"
+    )
     parser.add_argument("--all", action="store_true", help="Compute for all models")
 
     args = parser.parse_args()
@@ -300,10 +309,12 @@ if __name__ == "__main__":
             output_path=args.output,
             model_type=args.model_type,
             top_n=args.top_n,
-            max_samples=args.max_samples
+            max_samples=args.max_samples,
         )
     else:
         parser.print_help()
         print("\nExample usage:")
         print("  python compute_shap_importance.py --all")
-        print("  python compute_shap_importance.py --model models/url_model.pkl --test-data data/processed/url_features.csv --output models/shap_importance_url.json --model-type url")
+        print(
+            "  python compute_shap_importance.py --model models/url_model.pkl --test-data data/processed/url_features.csv --output models/shap_importance_url.json --model-type url"
+        )
