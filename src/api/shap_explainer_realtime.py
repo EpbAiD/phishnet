@@ -115,5 +115,4 @@ def extract_shap_features_realtime(
 
 def clear_explainer_cache():
     """Clear the SHAP explainer cache to free memory."""
-    global _explainer_cache
     _explainer_cache.clear()
