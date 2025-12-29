@@ -1,0 +1,138 @@
+name: Daily Data Collection & Processing
+
+on:
+  schedule:
+    # Run at 2 AM UTC daily (adjust timezone as needed)
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      num_urls:
+        description: 'Number of URLs to collect'
+        required: false
+        default: '1000'
+
+env:
+  GCP_PROJECT_ID: coms-452404
+  GCP_ZONE: us-central1-c
+  VM_NAME: dns-whois-fetch-25
+  GCP_ACCOUNT: eb3658@columbia.edu
+
+jobs:
+  collect-urls:
+    name: Collect URLs from Sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Start VM if stopped
+        run: |
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --format="get(status)" || echo "NOT_FOUND")
+
+          if [ "$VM_STATUS" = "TERMINATED" ] || [ "$VM_STATUS" = "STOPPED" ]; then
+            echo "Starting VM..."
+            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+
+            # Wait for VM to be ready
+            echo "Waiting for VM to be ready..."
+            sleep 30
+
+            # Wait for SSH to be available
+            for i in {1..12}; do
+              if gcloud compute ssh ${{ env.VM_NAME }} \
+                --zone=${{ env.GCP_ZONE }} \
+                --account=${{ env.GCP_ACCOUNT }} \
+                --command="echo ready" 2>/dev/null; then
+                echo "VM is ready!"
+                break
+              fi
+              echo "Waiting for SSH... (attempt $i/12)"
+              sleep 10
+            done
+          else
+            echo "VM is already running (status: $VM_STATUS)"
+          fi
+
+      - name: Run URL collection script
+        run: |
+          chmod +x scripts/collect_urls_daily.sh
+          ./scripts/collect_urls_daily.sh
+        env:
+          NUM_URLS: ${{ github.event.inputs.num_urls || '1000' }}
+
+      - name: Verify VM processor started
+        run: |
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --account=${{ env.GCP_ACCOUNT }} \
+            --command="
+              if screen -list | grep -q phishnet; then
+                echo '✅ VM processor is running'
+                exit 0
+              else
+                echo '❌ VM processor not running'
+                exit 1
+              fi
+            "
+
+      - name: Get collection timestamp
+        id: timestamp
+        run: |
+          TIMESTAMP=$(date +%Y%m%d)
+          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "Collection timestamp: $TIMESTAMP"
+
+      - name: Trigger VM processing monitor workflow
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'vm_processing_monitor.yml',
+              ref: 'main',
+              inputs: {
+                timestamp: '${{ steps.timestamp.outputs.timestamp }}'
+              }
+            });
+
+  notify-collection-complete:
+    name: Notify Collection Status
+    runs-on: ubuntu-latest
+    needs: collect-urls
+    if: always()
+
+    steps:
+      - name: Report success
+        if: needs.collect-urls.result == 'success'
+        run: |
+          echo "✅ URL collection completed successfully"
+          echo "URLs collected and uploaded to VM"
+          echo "VM processing started in background"
+
+      - name: Report failure
+        if: needs.collect-urls.result != 'success'
+        run: |
+          echo "❌ URL collection failed"
+          exit 1

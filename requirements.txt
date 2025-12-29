@@ -1,0 +1,47 @@
+# ===============================================================
+# requirements.txt - Phishing Detection API Dependencies
+# ===============================================================
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# Machine Learning
+scikit-learn==1.4.0
+catboost==1.2.2
+xgboost==2.0.3
+lightgbm==4.3.0
+
+# Data Processing
+pandas==2.2.0
+numpy==1.26.3
+
+# SHAP Explainability
+shap==0.44.1
+
+# Feature Extraction
+python-whois==0.8.0
+tldextract==5.1.1
+dnspython==2.5.0
+
+# Model Persistence
+joblib==1.3.2
+
+# Utilities
+requests==2.31.0
+python-dateutil==2.8.2
+
+# Configuration Management
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Security & Rate Limiting
+slowapi==0.1.9
+
+# Optional: LLM Support (not used in current deployment)
+# torch==2.1.2
+# transformers==4.37.0

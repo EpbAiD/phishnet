@@ -1,0 +1,96 @@
+# ============================================================
+# .gitignore for Phishing Detection Project
+# ============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code
+.claude/settings.local.json
+
+# Logs (keep structure, ignore files)
+logs/**/*.txt
+logs/**/*.log
+logs/**/*.csv
+logs/**/*.json
+catboost_info/
+
+# Test Results (keep latest only)
+test_results/*_201*.csv
+test_results/*_201*.json
+test_results/*_202*.csv
+test_results/*_202*.json
+!test_results/latest_*.csv
+!test_results/latest_*.json
+
+# Intermediate Data (can regenerate)
+data/archive/
+data/processed/url_features.csv
+data/processed/url_features_modelready.csv
+data/processed/whois_features_modelready.csv
+data/processed/whois_results.csv
+data/processed/full_domain_list.csv
+
+# Keep only essential processed data
+!data/processed/url_features_modelready_imputed.csv
+!data/processed/whois_features_modelready_imputed.csv
+!data/processed/feature_metadata.json
+
+# Model artifacts (if not tracking in git)
+# models/*.pkl  # Uncomment to exclude models from version control
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.tar.gz
+*.zip
+*_backup_*
+
+# Analysis outputs
+analysis/*_old.csv
+analysis/*_backup.csv

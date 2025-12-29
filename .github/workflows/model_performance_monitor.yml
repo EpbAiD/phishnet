@@ -1,0 +1,337 @@
+name: Model Performance Monitoring
+
+on:
+  # Run weekly on Sundays at 12 PM UTC (optimized for cost)
+  schedule:
+    - cron: '0 12 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  evaluate-models:
+    name: Evaluate Model Performance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Load test dataset
+        run: |
+          # Check if test set exists
+          if [ ! -f "data/test_set.csv" ]; then
+            echo "⚠️ Test set not found, creating one..."
+            python3 scripts/collect_test_set.py
+          fi
+
+      - name: Evaluate models on test set
+        id: evaluate
+        run: |
+          python3 << 'EOF'
+          import pandas as pd
+          import joblib
+          import json
+          import os
+          from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+          from pathlib import Path
+
+          # Load test data
+          test_df = pd.read_csv('data/test_set.csv')
+          y_test = test_df['label']
+
+          results = {}
+          models_dir = Path('models')
+
+          # Check which models exist
+          model_files = {
+              'url': 'url_catboost.pkl',
+              'dns': 'dns_catboost.pkl',
+              'whois': 'whois_catboost.pkl',
+              'ensemble': 'ensemble_model.pkl'
+          }
+
+          for model_name, model_file in model_files.items():
+              model_path = models_dir / model_file
+              if not model_path.exists():
+                  print(f"⚠️ Model {model_name} not found at {model_path}")
+                  continue
+
+              try:
+                  # Load model
+                  model = joblib.load(model_path)
+
+                  # Get predictions
+                  if model_name == 'url':
+                      X_test = test_df[[col for col in test_df.columns if col.startswith('url_') and col != 'url']]
+                  elif model_name == 'dns':
+                      X_test = test_df[[col for col in test_df.columns if col.startswith('dns_')]]
+                  elif model_name == 'whois':
+                      X_test = test_df[[col for col in test_df.columns if col.startswith('whois_')]]
+                  else:  # ensemble
+                      X_test = test_df[[col for col in test_df.columns if col not in ['label', 'url']]]
+
+                  y_pred = model.predict(X_test)
+                  y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else y_pred
+
+                  # Calculate metrics
+                  metrics = {
+                      'accuracy': float(accuracy_score(y_test, y_pred)),
+                      'precision': float(precision_score(y_test, y_pred)),
+                      'recall': float(recall_score(y_test, y_pred)),
+                      'f1': float(f1_score(y_test, y_pred)),
+                      'auc': float(roc_auc_score(y_test, y_prob))
+                  }
+
+                  results[model_name] = metrics
+
+                  print(f"\n{model_name.upper()} Model Performance:")
+                  for metric, value in metrics.items():
+                      print(f"  {metric}: {value:.4f}")
+
+              except Exception as e:
+                  print(f"❌ Error evaluating {model_name}: {e}")
+
+          # Save results
+          with open('model_performance.json', 'w') as f:
+              json.dump(results, f, indent=2)
+
+          # Write to GitHub output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              for model_name, metrics in results.items():
+                  f.write(f"{model_name}_accuracy={metrics['accuracy']:.4f}\n")
+                  f.write(f"{model_name}_f1={metrics['f1']:.4f}\n")
+
+          print("\n✅ Model evaluation complete")
+          EOF
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-performance-report
+          path: model_performance.json
+
+      - name: Check performance thresholds
+        run: |
+          python3 << 'EOF'
+          import json
+          import sys
+
+          # Define thresholds
+          THRESHOLDS = {
+              'accuracy': 0.90,
+              'precision': 0.90,
+              'recall': 0.85,
+              'f1': 0.88
+          }
+
+          # Load results
+          with open('model_performance.json', 'r') as f:
+              results = json.load(f)
+
+          print("\n" + "=" * 60)
+          print("PERFORMANCE THRESHOLD VALIDATION")
+          print("=" * 60)
+
+          all_passed = True
+
+          for model_name, metrics in results.items():
+              print(f"\n{model_name.upper()} Model:")
+
+              for metric_name, threshold in THRESHOLDS.items():
+                  if metric_name in metrics:
+                      value = metrics[metric_name]
+                      passed = value >= threshold
+
+                      status = "✅" if passed else "❌"
+                      print(f"  {status} {metric_name}: {value:.4f} (threshold: {threshold:.4f})")
+
+                      if not passed:
+                          all_passed = False
+
+          if not all_passed:
+              print("\n⚠️ WARNING: Some models are below performance thresholds!")
+              print("Consider investigating model degradation or data quality issues.")
+              # Don't fail the workflow, just warn
+          else:
+              print("\n✅ All models meet performance thresholds")
+          EOF
+
+      - name: Compare with previous performance
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          # Load current results
+          with open('model_performance.json', 'r') as f:
+              current = json.load(f)
+
+          # Try to load previous results
+          previous_file = Path('models/previous_performance.json')
+          if previous_file.exists():
+              with open(previous_file, 'r') as f:
+                  previous = json.load(f)
+
+              print("\n" + "=" * 60)
+              print("PERFORMANCE COMPARISON (vs. Previous)")
+              print("=" * 60)
+
+              for model_name in current.keys():
+                  if model_name in previous:
+                      print(f"\n{model_name.upper()} Model:")
+
+                      for metric in ['accuracy', 'f1', 'auc']:
+                          if metric in current[model_name] and metric in previous[model_name]:
+                              curr_val = current[model_name][metric]
+                              prev_val = previous[model_name][metric]
+                              diff = curr_val - prev_val
+                              pct_change = (diff / prev_val) * 100 if prev_val != 0 else 0
+
+                              arrow = "📈" if diff > 0 else "📉" if diff < 0 else "➡️"
+                              print(f"  {arrow} {metric}: {curr_val:.4f} (prev: {prev_val:.4f}, change: {pct_change:+.2f}%)")
+          else:
+              print("\n⚠️ No previous performance data found for comparison")
+
+          # Save current as previous for next run
+          with open('models/previous_performance.json', 'w') as f:
+              json.dump(current, f, indent=2)
+          EOF
+
+      - name: Commit performance history
+        run: |
+          git config user.name "Eeshan Bhanap"
+          git config user.email "eb3658@columbia.edu"
+
+          git add models/previous_performance.json
+          git commit -m "Update model performance history" || echo "No changes to commit"
+          git push
+
+      - name: Create performance summary
+        id: summary
+        run: |
+          python3 << 'EOF'
+          import json
+
+          with open('model_performance.json', 'r') as f:
+              results = json.load(f)
+
+          # Create markdown summary
+          summary = "## 📊 Model Performance Report\n\n"
+
+          for model_name, metrics in results.items():
+              summary += f"### {model_name.upper()} Model\n"
+              summary += f"- **Accuracy**: {metrics.get('accuracy', 0):.2%}\n"
+              summary += f"- **Precision**: {metrics.get('precision', 0):.2%}\n"
+              summary += f"- **Recall**: {metrics.get('recall', 0):.2%}\n"
+              summary += f"- **F1 Score**: {metrics.get('f1', 0):.2%}\n"
+              summary += f"- **AUC**: {metrics.get('auc', 0):.4f}\n\n"
+
+          print(summary)
+
+          # Write to step summary
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
+              f.write(summary)
+          EOF
+
+  detect-model-drift:
+    name: Detect Model Drift
+    runs-on: ubuntu-latest
+    needs: evaluate-models
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Download performance report
+        uses: actions/download-artifact@v3
+        with:
+          name: model-performance-report
+
+      - name: Check for drift
+        run: |
+          python3 << 'EOF'
+          import json
+          from pathlib import Path
+
+          # Load current performance
+          with open('model_performance.json', 'r') as f:
+              current = json.load(f)
+
+          # Load historical performance if exists
+          history_file = Path('models/performance_history.json')
+          if history_file.exists():
+              with open(history_file, 'r') as f:
+                  history = json.load(f)
+          else:
+              history = []
+
+          # Calculate rolling average (last 5 runs)
+          DRIFT_THRESHOLD = 0.05  # 5% degradation
+          drift_detected = False
+
+          if len(history) >= 5:
+              print("\n" + "=" * 60)
+              print("MODEL DRIFT DETECTION")
+              print("=" * 60)
+
+              for model_name in current.keys():
+                  print(f"\n{model_name.upper()} Model:")
+
+                  # Get historical accuracy
+                  historical_accuracies = [
+                      h[model_name]['accuracy']
+                      for h in history[-5:]
+                      if model_name in h and 'accuracy' in h[model_name]
+                  ]
+
+                  if historical_accuracies:
+                      avg_historical = sum(historical_accuracies) / len(historical_accuracies)
+                      current_accuracy = current[model_name]['accuracy']
+                      drift = avg_historical - current_accuracy
+
+                      if drift > DRIFT_THRESHOLD:
+                          print(f"  🚨 DRIFT DETECTED!")
+                          print(f"     Current accuracy: {current_accuracy:.4f}")
+                          print(f"     Historical avg: {avg_historical:.4f}")
+                          print(f"     Degradation: {drift:.4f} ({drift*100:.2f}%)")
+                          drift_detected = True
+                      else:
+                          print(f"  ✅ No significant drift")
+                          print(f"     Current: {current_accuracy:.4f}, Historical avg: {avg_historical:.4f}")
+
+          # Append current to history
+          history.append(current)
+
+          # Keep only last 30 runs
+          history = history[-30:]
+
+          # Save updated history
+          with open('models/performance_history.json', 'w') as f:
+              json.dump(history, f, indent=2)
+
+          if drift_detected:
+              print("\n⚠️ Model drift detected! Consider retraining or investigating data quality.")
+          EOF
+
+      - name: Commit drift history
+        run: |
+          git config user.name "Eeshan Bhanap"
+          git config user.email "eb3658@columbia.edu"
+
+          git add models/performance_history.json
+          git commit -m "Update model drift history" || echo "No changes to commit"
+          git push

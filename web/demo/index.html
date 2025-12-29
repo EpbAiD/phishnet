@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhishNet - ML System Demo</title>
+    <link rel="stylesheet" href="../assets/css/demo.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <h1>🛡️ PhishNet</h1>
+                <p class="subtitle">Advanced ML-Powered Phishing Detection</p>
+            </div>
+            <div class="demo-badge">
+                <span class="badge">DEMO VERSION</span>
+                <p class="badge-note">For testing the ML system - Not for production use</p>
+            </div>
+        </header>
+
+        <!-- Info Section -->
+        <section class="info-section">
+            <div class="info-card">
+                <h3>🧪 About This Demo</h3>
+                <p>This is a <strong>testing interface</strong> for the PhishNet ML system. Use this to:</p>
+                <ul>
+                    <li>Test the phishing detection models</li>
+                    <li>See real-time analysis of URLs</li>
+                    <li>Understand how the ML system works</li>
+                </ul>
+                <p class="note">
+                    <strong>Note:</strong> For real-time protection, use the
+                    <a href="../extension/phishnet-extension.zip" download>browser extension</a>.
+                </p>
+            </div>
+
+            <div class="stats-card">
+                <h3>📊 System Stats</h3>
+                <div class="stats-grid">
+                    <div class="stat">
+                        <span class="stat-value" id="total-urls">Loading...</span>
+                        <span class="stat-label">URLs Analyzed</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="model-accuracy">Loading...</span>
+                        <span class="stat-label">Model Accuracy</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="last-updated">Loading...</span>
+                        <span class="stat-label">Last Updated</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- URL Checker -->
+        <section class="checker-section">
+            <h2>🔍 Check a URL</h2>
+
+            <div class="input-group">
+                <input
+                    type="text"
+                    id="url-input"
+                    placeholder="Enter URL to check (e.g., https://example.com)"
+                    autocomplete="off"
+                />
+                <button id="check-btn" onclick="checkURL()">
+                    <span id="btn-text">Analyze URL</span>
+                    <span id="btn-loader" class="loader" style="display: none;"></span>
+                </button>
+            </div>
+
+            <div class="examples">
+                <p>Try these examples:</p>
+                <button class="example-btn" onclick="setURL('https://google.com')">google.com</button>
+                <button class="example-btn" onclick="setURL('http://suspicious-paypal-login.xyz')">suspicious-paypal-login.xyz</button>
+                <button class="example-btn" onclick="setURL('https://github.com')">github.com</button>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section id="results-section" class="results-section" style="display: none;">
+            <div class="result-header">
+                <h2>Analysis Results</h2>
+                <span id="result-badge" class="result-badge"></span>
+            </div>
+
+            <!-- Overall Prediction -->
+            <div class="prediction-card">
+                <div class="prediction-icon" id="prediction-icon"></div>
+                <div class="prediction-text">
+                    <h3 id="prediction-title"></h3>
+                    <p id="prediction-desc"></p>
+                </div>
+                <div class="confidence-score">
+                    <div class="confidence-label">Confidence</div>
+                    <div class="confidence-value" id="confidence-value">0%</div>
+                </div>
+            </div>
+
+            <!-- Model Scores -->
+            <div class="models-grid">
+                <h3>Individual Model Predictions</h3>
+
+                <div class="model-card">
+                    <div class="model-header">
+                        <span class="model-name">URL Model</span>
+                        <span class="model-score" id="url-score">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="url-progress"></div>
+                    </div>
+                    <p class="model-desc">Analyzes URL structure and patterns</p>
+                </div>
+
+                <div class="model-card">
+                    <div class="model-header">
+                        <span class="model-name">DNS Model</span>
+                        <span class="model-score" id="dns-score">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="dns-progress"></div>
+                    </div>
+                    <p class="model-desc">Checks DNS records and reputation</p>
+                </div>
+
+                <div class="model-card">
+                    <div class="model-header">
+                        <span class="model-name">WHOIS Model</span>
+                        <span class="model-score" id="whois-score">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="whois-progress"></div>
+                    </div>
+                    <p class="model-desc">Analyzes domain registration data</p>
+                </div>
+
+                <div class="model-card">
+                    <div class="model-header">
+                        <span class="model-name">Ensemble Model</span>
+                        <span class="model-score" id="ensemble-score">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="ensemble-progress"></div>
+                    </div>
+                    <p class="model-desc">Combined prediction from all models</p>
+                </div>
+            </div>
+
+            <!-- Feature Analysis -->
+            <div class="features-section">
+                <h3>🔬 Detected Features</h3>
+                <div id="features-list" class="features-grid">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Error Section -->
+        <section id="error-section" class="error-section" style="display: none;">
+            <div class="error-card">
+                <span class="error-icon">⚠️</span>
+                <h3>Analysis Failed</h3>
+                <p id="error-message"></p>
+                <button onclick="resetForm()">Try Again</button>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>About PhishNet</h4>
+                    <p>ML-powered phishing detection using URL, DNS, and WHOIS analysis</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Downloads</h4>
+                    <p><a href="../extension/phishnet-extension.zip" download>Browser Extension</a></p>
+                    <p><a href="https://github.com/YOUR_USERNAME/YOUR_REPO">View on GitHub</a></p>
+                </div>
+                <div class="footer-section">
+                    <h4>Documentation</h4>
+                    <p><a href="../docs/README.html">User Guide</a></p>
+                    <p><a href="../docs/API.html">API Documentation</a></p>
+                </div>
+            </div>
+            <div class="footer-note">
+                <p>Built by Eeshan Bhanap (eb3658@columbia.edu) | Columbia University</p>
+                <p class="warning">⚠️ This is a demo interface for testing. Use the browser extension for real-time protection.</p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Configuration -->
+    <script>
+        // IMPORTANT: Update this URL to your FastAPI backend
+        const API_BASE_URL = 'http://localhost:8000';  // Change to your production URL
+
+        // Or use environment-specific URLs
+        // const API_BASE_URL = window.location.hostname === 'localhost'
+        //     ? 'http://localhost:8000'
+        //     : 'https://your-api-server.com';
+    </script>
+
+    <script src="../assets/js/demo.js"></script>
+</body>
+</html>

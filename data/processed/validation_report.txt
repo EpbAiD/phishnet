@@ -1,0 +1,35 @@
+
+================================================================================
+FEATURE VALIDATION REPORT
+================================================================================
+
+🚨 CRITICAL ISSUES (Must Fix):
+
+1. [DNS] DNS lookups appear to have failed - 90%+ have no A records
+   - no_a_records: 21995
+   - percentage: 99.99545371885797
+
+2. [DNS] IPWHOIS lookups failed - no IP addresses found
+   - no_ips: 21995
+   - percentage: 99.99545371885797
+
+3. [DNS] ASN/IPWHOIS data mostly missing - lookups likely failed
+
+4. [CONSISTENCY] More than 50% of URLs lack DNS data: 25251
+
+⚠️  WARNINGS (Should Review):
+
+1. [URL] Multiple label values detected (should normalize to binary)
+   - labels: ['legitimate', 'phishing', 'legit']
+   - counts: {'legit': 16080, 'phishing': 9840, 'legitimate': 6205}
+
+2. [WHOIS] Unrealistic registration lengths (>100 years): 3
+
+================================================================================
+SUMMARY
+================================================================================
+Critical Issues: 4
+Warnings: 2
+Info: 0
+
+❌ Critical issues found - please address before training!

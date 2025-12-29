@@ -1,0 +1,16 @@
+[Unit]
+Description=PhishNet MLOps Pipeline
+After=network.target
+
+[Service]
+Type=simple
+User=eeshanbhanap
+WorkingDirectory=/Users/eeshanbhanap/Desktop/PDF
+ExecStart=/usr/bin/python3 /Users/eeshanbhanap/Desktop/PDF/scripts/mlops_pipeline.py --continuous
+Restart=always
+RestartSec=60
+StandardOutput=append:/Users/eeshanbhanap/Desktop/PDF/logs/mlops_service.log
+StandardError=append:/Users/eeshanbhanap/Desktop/PDF/logs/mlops_service_error.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,271 @@
+name: VM Processing Monitor & Data Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      timestamp:
+        description: 'Processing timestamp (YYYYMMDD)'
+        required: true
+      max_wait_hours:
+        description: 'Maximum hours to wait for processing'
+        required: false
+        default: '8'
+
+env:
+  GCP_PROJECT_ID: coms-452404
+  GCP_ZONE: us-central1-c
+  VM_NAME: dns-whois-fetch-25
+  GCP_ACCOUNT: eb3658@columbia.edu
+
+jobs:
+  monitor-vm-processing:
+    name: Monitor VM Processing
+    runs-on: ubuntu-latest
+    timeout-minutes: 600  # 10 hours max
+    outputs:
+      processing_complete: ${{ steps.check_complete.outputs.complete }}
+      dns_rows: ${{ steps.final_stats.outputs.dns_rows }}
+      whois_rows: ${{ steps.final_stats.outputs.whois_rows }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Monitor processing progress
+        id: monitor
+        run: |
+          TIMESTAMP="${{ github.event.inputs.timestamp }}"
+          MAX_WAIT_HOURS="${{ github.event.inputs.max_wait_hours }}"
+          MAX_CHECKS=$((MAX_WAIT_HOURS / 2))  # Check every 2 hours (optimized for cost)
+          EXPECTED_ROWS=1001  # 1000 URLs + header
+
+          echo "Starting VM processing monitor"
+          echo "Timestamp: $TIMESTAMP"
+          echo "Expected rows: $EXPECTED_ROWS"
+          echo "Max wait: $MAX_WAIT_HOURS hours"
+
+          for i in $(seq 1 $MAX_CHECKS); do
+            echo ""
+            echo "=== Check $i/$MAX_CHECKS ($(date)) ==="
+
+            # Get current row counts
+            DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
+              --zone=${{ env.GCP_ZONE }} \
+              --account=${{ env.GCP_ACCOUNT }} \
+              --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+
+            WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
+              --zone=${{ env.GCP_ZONE }} \
+              --account=${{ env.GCP_ACCOUNT }} \
+              --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+
+            echo "DNS rows: $DNS_ROWS / $EXPECTED_ROWS"
+            echo "WHOIS rows: $WHOIS_ROWS / $EXPECTED_ROWS"
+
+            # Check if processing complete
+            if [ "$DNS_ROWS" -eq "$EXPECTED_ROWS" ] && [ "$WHOIS_ROWS" -eq "$EXPECTED_ROWS" ]; then
+              echo "✅ Processing complete!"
+              echo "dns_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
+              echo "whois_rows=$WHOIS_ROWS" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # Check if VM processor is still running
+            PROCESSOR_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
+              --zone=${{ env.GCP_ZONE }} \
+              --account=${{ env.GCP_ACCOUNT }} \
+              --command="screen -list | grep -c phishnet || echo 0")
+
+            if [ "$PROCESSOR_RUNNING" -eq "0" ] && [ "$DNS_ROWS" -lt "$EXPECTED_ROWS" ]; then
+              echo "❌ VM processor stopped but processing incomplete!"
+              echo "This may indicate an error. Check VM logs."
+              exit 1
+            fi
+
+            # Progress percentage
+            PROGRESS=$((DNS_ROWS * 100 / EXPECTED_ROWS))
+            echo "Progress: ${PROGRESS}%"
+
+            # Sleep 2 hours before next check (optimized for cost)
+            if [ $i -lt $MAX_CHECKS ]; then
+              echo "Sleeping 2 hours before next check..."
+              sleep 7200
+            fi
+          done
+
+          echo "❌ Timeout: Processing did not complete within $MAX_WAIT_HOURS hours"
+          echo "DNS rows: $DNS_ROWS / $EXPECTED_ROWS"
+          echo "WHOIS rows: $WHOIS_ROWS / $EXPECTED_ROWS"
+          exit 1
+
+      - name: Mark processing complete
+        id: check_complete
+        if: success()
+        run: echo "complete=true" >> $GITHUB_OUTPUT
+
+      - name: Get final statistics
+        id: final_stats
+        if: success()
+        run: |
+          TIMESTAMP="${{ github.event.inputs.timestamp }}"
+
+          # Get final row counts
+          DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --account=${{ env.GCP_ACCOUNT }} \
+            --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv")
+
+          WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --account=${{ env.GCP_ACCOUNT }} \
+            --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv")
+
+          echo "dns_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
+          echo "whois_rows=$WHOIS_ROWS" >> $GITHUB_OUTPUT
+
+  validate-data-quality:
+    name: Validate Data Quality
+    runs-on: ubuntu-latest
+    needs: monitor-vm-processing
+    if: needs.monitor-vm-processing.outputs.processing_complete == 'true'
+    outputs:
+      quality_passed: ${{ steps.validate.outputs.passed }}
+      dns_success_rate: ${{ steps.validate.outputs.dns_success_rate }}
+      whois_success_rate: ${{ steps.validate.outputs.whois_success_rate }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Download data from VM
+        run: |
+          TIMESTAMP="${{ github.event.inputs.timestamp }}"
+          mkdir -p vm_data/temp
+
+          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv \
+            vm_data/temp/dns_${TIMESTAMP}.csv \
+            --zone=${{ env.GCP_ZONE }} \
+            --account=${{ env.GCP_ACCOUNT }}
+
+          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv \
+            vm_data/temp/whois_${TIMESTAMP}.csv \
+            --zone=${{ env.GCP_ZONE }} \
+            --account=${{ env.GCP_ACCOUNT }}
+
+      - name: Validate data quality
+        id: validate
+        run: |
+          TIMESTAMP="${{ github.event.inputs.timestamp }}"
+
+          python3 << 'EOF'
+          import pandas as pd
+          import sys
+
+          timestamp = "${{ github.event.inputs.timestamp }}"
+
+          # Read data
+          dns = pd.read_csv(f'vm_data/temp/dns_{timestamp}.csv')
+          whois = pd.read_csv(f'vm_data/temp/whois_{timestamp}.csv')
+
+          print("=" * 60)
+          print("DATA QUALITY VALIDATION")
+          print("=" * 60)
+
+          # Check row counts match
+          print(f"\nRow counts:")
+          print(f"  DNS: {len(dns)}")
+          print(f"  WHOIS: {len(whois)}")
+
+          if len(dns) != len(whois):
+              print("❌ Row count mismatch!")
+              sys.exit(1)
+
+          # Calculate DNS success rate
+          dns_success = (dns['has_dns_record'] == 1).sum()
+          dns_success_rate = dns_success / len(dns) * 100
+
+          # Calculate WHOIS success rate (exclude IP addresses)
+          whois_ip_count = whois.iloc[:, 0].isna().sum()
+          whois_domains = len(whois) - whois_ip_count
+          whois_success = len(whois) - whois.iloc[:, -2].str.contains('error|timeout|not applicable', case=False, na=False).sum()
+          whois_success_rate = (whois_success / whois_domains * 100) if whois_domains > 0 else 0
+
+          print(f"\nSuccess rates:")
+          print(f"  DNS: {dns_success_rate:.2f}%")
+          print(f"  WHOIS: {whois_success_rate:.2f}%")
+
+          # Check thresholds
+          DNS_THRESHOLD = 95.0
+          WHOIS_THRESHOLD = 95.0
+
+          passed = dns_success_rate >= DNS_THRESHOLD and whois_success_rate >= WHOIS_THRESHOLD
+
+          if passed:
+              print(f"\n✅ Data quality validation PASSED")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"passed=true\n")
+                  f.write(f"dns_success_rate={dns_success_rate:.2f}\n")
+                  f.write(f"whois_success_rate={whois_success_rate:.2f}\n")
+          else:
+              print(f"\n❌ Data quality validation FAILED")
+              if dns_success_rate < DNS_THRESHOLD:
+                  print(f"   DNS success rate {dns_success_rate:.2f}% below threshold {DNS_THRESHOLD}%")
+              if whois_success_rate < WHOIS_THRESHOLD:
+                  print(f"   WHOIS success rate {whois_success_rate:.2f}% below threshold {WHOIS_THRESHOLD}%")
+              sys.exit(1)
+          EOF
+
+      - name: Upload validated data as artifact
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: validated-features-${{ github.event.inputs.timestamp }}
+          path: vm_data/temp/
+          retention-days: 30
+
+  stop-vm:
+    name: Stop VM to Save Costs
+    runs-on: ubuntu-latest
+    needs: [monitor-vm-processing, validate-data-quality]
+    if: always()
+
+    steps:
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Stop VM
+        run: |
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --format="get(status)")
+
+          if [ "$VM_STATUS" = "RUNNING" ]; then
+            echo "Stopping VM to save costs..."
+            gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+            echo "✅ VM stopped"
+          else
+            echo "VM is already stopped (status: $VM_STATUS)"
+          fi

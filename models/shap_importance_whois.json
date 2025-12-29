@@ -1,0 +1,69 @@
+{
+  "model_type": "whois",
+  "model_path": "models/whois_catboost.pkl",
+  "num_samples": 100,
+  "num_features": 12,
+  "top_n": 10,
+  "features": [
+    {
+      "rank": 1,
+      "feature": "updated_date",
+      "mean_abs_shap": 2.1239473314536794,
+      "index": 4
+    },
+    {
+      "rank": 2,
+      "feature": "creation_date",
+      "mean_abs_shap": 2.086411687416511,
+      "index": 2
+    },
+    {
+      "rank": 3,
+      "feature": "expiration_date",
+      "mean_abs_shap": 1.3448358539739058,
+      "index": 3
+    },
+    {
+      "rank": 4,
+      "feature": "domain_age_days",
+      "mean_abs_shap": 0.8504206609200884,
+      "index": 5
+    },
+    {
+      "rank": 5,
+      "feature": "registrant_country",
+      "mean_abs_shap": 0.8017261030236598,
+      "index": 8
+    },
+    {
+      "rank": 6,
+      "feature": "whois_success",
+      "mean_abs_shap": 0.6159295935162306,
+      "index": 10
+    },
+    {
+      "rank": 7,
+      "feature": "whois_server",
+      "mean_abs_shap": 0.3539895407966208,
+      "index": 1
+    },
+    {
+      "rank": 8,
+      "feature": "registration_length_days",
+      "mean_abs_shap": 0.311694477333221,
+      "index": 6
+    },
+    {
+      "rank": 9,
+      "feature": "registrar",
+      "mean_abs_shap": 0.2118573217052102,
+      "index": 0
+    },
+    {
+      "rank": 10,
+      "feature": "error_msg",
+      "mean_abs_shap": 0.18927948435431954,
+      "index": 11
+    }
+  ]
+}

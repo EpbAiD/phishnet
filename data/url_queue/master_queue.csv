@@ -1,0 +1,16 @@
+url,label,source
+https://www.google.com,legitimate,common_legit
+https://www.amazon.com,legitimate,common_legit
+https://www.wikipedia.org,legitimate,common_legit
+https://www.github.com,legitimate,common_legit
+https://www.stackoverflow.com,legitimate,common_legit
+https://www.reddit.com,legitimate,common_legit
+https://www.twitter.com,legitimate,common_legit
+https://www.facebook.com,legitimate,common_legit
+https://www.youtube.com,legitimate,common_legit
+https://www.linkedin.com,legitimate,common_legit
+https://www.microsoft.com,legitimate,common_legit
+https://www.apple.com,legitimate,common_legit
+https://www.netflix.com,legitimate,common_legit
+https://www.spotify.com,legitimate,common_legit
+https://www.dropbox.com,legitimate,common_legit

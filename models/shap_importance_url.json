@@ -1,0 +1,69 @@
+{
+  "model_type": "url",
+  "model_path": "models/url_catboost.pkl",
+  "num_samples": 100,
+  "num_features": 39,
+  "top_n": 10,
+  "features": [
+    {
+      "rank": 1,
+      "feature": "num_dots",
+      "mean_abs_shap": 1.586801667870869,
+      "index": 4
+    },
+    {
+      "rank": 2,
+      "feature": "file_type",
+      "mean_abs_shap": 1.5321625104521537,
+      "index": 25
+    },
+    {
+      "rank": 3,
+      "feature": "digit_to_letter_ratio",
+      "mean_abs_shap": 1.3388242117008124,
+      "index": 17
+    },
+    {
+      "rank": 4,
+      "feature": "path_length",
+      "mean_abs_shap": 1.3087367813220094,
+      "index": 2
+    },
+    {
+      "rank": 5,
+      "feature": "tld_length",
+      "mean_abs_shap": 0.8871885979483736,
+      "index": 19
+    },
+    {
+      "rank": 6,
+      "feature": "num_special_chars",
+      "mean_abs_shap": 0.7864363846630954,
+      "index": 5
+    },
+    {
+      "rank": 7,
+      "feature": "num_directories",
+      "mean_abs_shap": 0.6589279836599771,
+      "index": 31
+    },
+    {
+      "rank": 8,
+      "feature": "hostname_length",
+      "mean_abs_shap": 0.5079024012169588,
+      "index": 1
+    },
+    {
+      "rank": 9,
+      "feature": "num_digits",
+      "mean_abs_shap": 0.40018337265493137,
+      "index": 6
+    },
+    {
+      "rank": 10,
+      "feature": "url_length",
+      "mean_abs_shap": 0.3950076996028416,
+      "index": 0
+    }
+  ]
+}

@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhishNet - URL Security Checker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .input-group {
+            margin-bottom: 30px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .url-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px;
+            font-size: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            transition: border 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: 600;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            background: #f5f5f5;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .mode-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .mode-btn:hover {
+            border-color: #667eea;
+        }
+
+        #result {
+            margin-top: 30px;
+            padding: 25px;
+            border-radius: 10px;
+            display: none;
+        }
+
+        #result.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-safe {
+            background: #d4edda;
+            border: 2px solid #28a745;
+        }
+
+        .result-danger {
+            background: #f8d7da;
+            border: 2px solid #dc3545;
+        }
+
+        .result-warning {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .result-icon {
+            font-size: 48px;
+        }
+
+        .result-title {
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .result-score {
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+
+        .result-details {
+            margin-top: 20px;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+
+        .detail-label {
+            font-weight: 600;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .examples {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .examples h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .example-link {
+            display: inline-block;
+            margin: 5px;
+            padding: 8px 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .example-link:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .debug-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .debug-toggle {
+            cursor: pointer;
+            color: #667eea;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+
+        .debug-content {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .debug-content.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔒 PhishNet</h1>
+            <p>Real-time Phishing Detection System</p>
+        </div>
+
+        <div class="content">
+            <div class="input-group">
+                <label for="urlInput">Enter URL to Check:</label>
+                <div class="url-input-wrapper">
+                    <input
+                        type="text"
+                        id="urlInput"
+                        placeholder="https://example.com"
+                        onkeypress="handleEnter(event)"
+                    >
+                    <button onclick="checkURL()" id="checkBtn">
+                        Check URL
+                    </button>
+                </div>
+            </div>
+
+            <div class="mode-selector">
+                <div class="mode-btn active" onclick="selectMode('url')" data-mode="url">
+                    <strong>⚡ Fast Check</strong><br>
+                    <small>~50ms | 90% accuracy</small>
+                </div>
+                <div class="mode-btn" onclick="selectMode('ensemble')" data-mode="ensemble">
+                    <strong>🎯 Deep Scan</strong><br>
+                    <small>~1-3s | 92% accuracy</small>
+                </div>
+                <div class="mode-btn" onclick="selectMode('explain')" data-mode="explain">
+                    <strong>📝 Explain</strong><br>
+                    <small>~2-5s | Full report</small>
+                </div>
+            </div>
+
+            <div id="result"></div>
+
+            <div class="examples">
+                <h3>Try These Examples:</h3>
+                <div class="example-link" onclick="setURL('https://google.com')">
+                    ✅ Google (Safe)
+                </div>
+                <div class="example-link" onclick="setURL('https://github.com')">
+                    ✅ GitHub (Safe)
+                </div>
+                <div class="example-link" onclick="setURL('http://paypal-verify-account.tk')">
+                    ⚠️ Suspicious Domain
+                </div>
+                <div class="example-link" onclick="setURL('http://secure-login-update.xyz/verify')">
+                    🚨 Phishing Pattern
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentMode = 'url';
+        let debugData = null;
+
+        function selectMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.closest('.mode-btn').classList.add('active');
+        }
+
+        function setURL(url) {
+            document.getElementById('urlInput').value = url;
+            checkURL();
+        }
+
+        function handleEnter(event) {
+            if (event.key === 'Enter') {
+                checkURL();
+            }
+        }
+
+        async function checkURL() {
+            const url = document.getElementById('urlInput').value.trim();
+            const resultDiv = document.getElementById('result');
+            const checkBtn = document.getElementById('checkBtn');
+
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+
+            // Show loading
+            resultDiv.className = '';
+            resultDiv.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing URL...</p>
+                </div>
+            `;
+            resultDiv.classList.add('show');
+            checkBtn.disabled = true;
+
+            try {
+                let endpoint, data;
+
+                if (currentMode === 'explain') {
+                    endpoint = `${API_BASE}/explain`;
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: url})
+                    });
+                    data = await response.json();
+                    displayExplanation(data);
+                } else {
+                    endpoint = `${API_BASE}/predict/${currentMode}`;
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: url})
+                    });
+                    data = await response.json();
+                    displayResult(data);
+                }
+
+                debugData = data;
+
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <strong>Error:</strong> ${error.message}<br>
+                        Make sure the API is running at ${API_BASE}
+                    </div>
+                `;
+            } finally {
+                checkBtn.disabled = false;
+            }
+        }
+
+        function displayResult(data) {
+            const resultDiv = document.getElementById('result');
+            const risk = data.risk_score * 100;
+            let className, icon, title, message;
+
+            if (data.is_phishing) {
+                className = 'result-danger';
+                icon = '🚨';
+                title = 'PHISHING DETECTED';
+                message = '❌ DO NOT visit this website<br>❌ DO NOT enter any personal information';
+            } else if (risk < 20) {
+                className = 'result-safe';
+                icon = '✅';
+                title = 'SAFE';
+                message = '✅ This URL appears to be legitimate';
+            } else {
+                className = 'result-warning';
+                icon = '⚠️';
+                title = 'BE CAUTIOUS';
+                message = '⚠️ Some suspicious indicators detected. Proceed with caution.';
+            }
+
+            resultDiv.className = className + ' show';
+            resultDiv.innerHTML = `
+                <div class="result-header">
+                    <div class="result-icon">${icon}</div>
+                    <div>
+                        <div class="result-title">${title}</div>
+                        <div class="result-score">Risk Score: ${risk.toFixed(1)}%</div>
+                    </div>
+                </div>
+                <div>${message}</div>
+                <div class="result-details">
+                    <div class="detail-item">
+                        <span class="detail-label">URL:</span>
+                        <span>${data.url}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Model:</span>
+                        <span>${data.model_name}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Analysis Time:</span>
+                        <span>${data.latency_ms.toFixed(0)}ms</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Threshold:</span>
+                        <span>${(data.threshold * 100).toFixed(0)}%</span>
+                    </div>
+                </div>
+                <div class="debug-toggle" onclick="toggleDebug()">
+                    🔍 Show Technical Details
+                </div>
+                <div class="debug-content" id="debugContent">
+                    <pre>${JSON.stringify(debugData, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        function displayExplanation(data) {
+            const resultDiv = document.getElementById('result');
+            const isPhishing = data.verdict === 'phishing';
+
+            resultDiv.className = (isPhishing ? 'result-danger' : 'result-safe') + ' show';
+            resultDiv.innerHTML = `
+                <div class="result-header">
+                    <div class="result-icon">${isPhishing ? '🚨' : '✅'}</div>
+                    <div>
+                        <div class="result-title">${isPhishing ? 'PHISHING' : 'SAFE'}</div>
+                        <div class="result-score">Confidence: ${data.confidence.toUpperCase()}</div>
+                    </div>
+                </div>
+                <div style="white-space: pre-wrap; margin-top: 20px;">
+                    ${data.explanation}
+                </div>
+                <div class="result-details">
+                    <div class="detail-item">
+                        <span class="detail-label">URL Model:</span>
+                        <span>${(data.predictions.url_prob * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">WHOIS Model:</span>
+                        <span>${data.predictions.whois_prob ? (data.predictions.whois_prob * 100).toFixed(1) + '%' : 'N/A'}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Ensemble:</span>
+                        <span>${(data.predictions.ensemble_prob * 100).toFixed(1)}%</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Analysis Time:</span>
+                        <span>${data.latency_ms.toFixed(0)}ms</span>
+                    </div>
+                </div>
+                <div class="debug-toggle" onclick="toggleDebug()">
+                    🔍 Show Technical Details
+                </div>
+                <div class="debug-content" id="debugContent">
+                    <pre>${JSON.stringify(debugData, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        function toggleDebug() {
+            const debugContent = document.getElementById('debugContent');
+            debugContent.classList.toggle('show');
+        }
+
+        // Check API health on load
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    console.log('✅ API is running');
+                }
+            } catch (error) {
+                console.error('❌ API not reachable. Start it with: docker-compose up');
+            }
+        });
+    </script>
+</body>
+</html>
