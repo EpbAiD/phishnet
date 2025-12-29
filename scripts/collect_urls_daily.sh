@@ -95,15 +95,20 @@ log "Step 3: Pushing URL batch to VM..."
 
 # Create VM directories if they don't exist
 gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
-    --command="mkdir -p ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs" >> "$LOG_FILE" 2>&1 || {
+    --command="sudo mkdir -p ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs && \
+               sudo chmod 755 ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs" >> "$LOG_FILE" 2>&1 || {
     log_error "Failed to create VM directories (VM may be unreachable)"
     log_info "Skipping VM upload - batch saved locally for manual upload"
     exit 0
 }
 
-# Upload batch file to VM
-gcloud compute scp "$OUTPUT_FILE" "${VM_NAME}:${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv" \
+# Upload batch file to /tmp first, then move to target directory with sudo
+gcloud compute scp "$OUTPUT_FILE" "${VM_NAME}:/tmp/batch_${DATE}.csv" \
     --zone="$VM_ZONE" --project="$GCP_PROJECT" >> "$LOG_FILE" 2>&1
+
+gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
+    --command="sudo mv /tmp/batch_${DATE}.csv ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv && \
+               sudo chown eeshanbhanap:eeshanbhanap ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv" >> "$LOG_FILE" 2>&1
 
 if [ $? -eq 0 ]; then
     log "✅ Batch uploaded to VM: ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv"

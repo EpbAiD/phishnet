@@ -59,11 +59,11 @@ jobs:
             # Get current row counts
             DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
 
             WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
 
             echo "DNS rows: $DNS_ROWS / $EXPECTED_ROWS"
             echo "WHOIS rows: $WHOIS_ROWS / $EXPECTED_ROWS"
@@ -117,11 +117,11 @@ jobs:
           # Get final row counts
           DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv")
+            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv")
 
           WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv")
+            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv")
 
           echo "dns_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
           echo "whois_rows=$WHOIS_ROWS" >> $GITHUB_OUTPUT
@@ -161,11 +161,19 @@ jobs:
           TIMESTAMP="${{ github.event.inputs.timestamp }}"
           mkdir -p vm_data/temp
 
-          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv \
+          # Copy files to tmp directory on VM first (since gcloud scp can't use sudo)
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --command="sudo cp /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv /tmp/ && \
+                       sudo cp /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv /tmp/ && \
+                       sudo chmod 644 /tmp/dns_${TIMESTAMP}.csv /tmp/whois_${TIMESTAMP}.csv"
+
+          # Now download from /tmp
+          gcloud compute scp ${{ env.VM_NAME }}:/tmp/dns_${TIMESTAMP}.csv \
             vm_data/temp/dns_${TIMESTAMP}.csv \
             --zone=${{ env.GCP_ZONE }}
 
-          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv \
+          gcloud compute scp ${{ env.VM_NAME }}:/tmp/whois_${TIMESTAMP}.csv \
             vm_data/temp/whois_${TIMESTAMP}.csv \
             --zone=${{ env.GCP_ZONE }}
 
