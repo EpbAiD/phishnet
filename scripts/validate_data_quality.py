@@ -215,9 +215,11 @@ def validate_url_features(df):
     # 7. Check port numbers (should be 0-65535)
     if 'port' in df.columns:
         if (df['port'] < 0).sum() > 0:
-            issues.append(f"❌ port: Found negative port numbers (impossible)")
+            count = (df['port'] < 0).sum()
+            issues.append(f"⚠️  port: {count} rows with negative port numbers (will be imputed)")
         if (df['port'] > 65535).sum() > 0:
-            issues.append(f"❌ port: Found port > 65535 (impossible, max is 65535)")
+            count = (df['port'] > 65535).sum()
+            issues.append(f"⚠️  port: {count} rows with port > 65535 (will be imputed)")
 
     return issues
 
