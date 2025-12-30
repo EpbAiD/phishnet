@@ -66,11 +66,13 @@ def validate_dns_features(df):
         if col in df.columns:
             # TTL should be positive
             if (df[col] < 0).sum() > 0:
-                issues.append(f"❌ {col}: Found negative TTL values (invalid)")
+                count = (df[col] < 0).sum()
+                issues.append(f"⚠️  {col}: {count} rows with negative TTL values (will be imputed)")
 
             # TTL should not exceed 2^32 (max for 32-bit unsigned)
             if (df[col] > 2**32).sum() > 0:
-                issues.append(f"❌ {col}: Found TTL > 2^32 (impossible)")
+                count = (df[col] > 2**32).sum()
+                issues.append(f"⚠️  {col}: {count} rows with TTL > 2^32 (will be imputed)")
 
     # 4. Check boolean flags are actually boolean
     bool_fields = [c for c in feature_cols if c.startswith('has_')]
