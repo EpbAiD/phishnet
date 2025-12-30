@@ -61,153 +61,50 @@ jobs:
             echo "VM is already running (status: $VM_STATUS)"
           fi
 
-      - name: Download weekly data from VM
+      - name: Download weekly data from GCS
         id: download
         run: |
           DAYS_TO_MERGE="${{ github.event.inputs.days_to_merge || '7' }}"
-          mkdir -p vm_data/weekly
 
-          echo "Downloading last $DAYS_TO_MERGE days of processed data..."
+          echo "Downloading last $DAYS_TO_MERGE days of incremental data from GCS..."
+          echo "Using merge_gcs_data.py script"
 
-          # Get list of timestamped files from the last week (filter out SSH noise)
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} \
-            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f 2>/dev/null || true" \
-            | grep -E '\.csv$' > dns_files.txt || true
+          # The merge script downloads from GCS and also picks up local URL batches
+          python3 scripts/merge_gcs_data.py $DAYS_TO_MERGE
 
-          gcloud compute ssh ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} \
-            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f 2>/dev/null || true" \
-            | grep -E '\.csv$' > whois_files.txt || true
+          echo "Downloads and merge complete!"
 
-          # Check if any files were found
-          DNS_COUNT=$(wc -l < dns_files.txt | tr -d ' ')
-          WHOIS_COUNT=$(wc -l < whois_files.txt | tr -d ' ')
+      - name: Prepare model-ready datasets with intelligent detection
+        id: prepare
+        run: |
+          # This script checks for data growth and prepares model-ready data
+          # Returns exit 0 if retraining needed, exit 1 if not
+          if python3 scripts/prepare_modelready.py; then
+            echo "Data growth detected - model-ready datasets prepared"
+            echo "needs_retraining=true" >> $GITHUB_OUTPUT
 
-          echo "Found $DNS_COUNT DNS files and $WHOIS_COUNT WHOIS files"
+            # Validate data quality
+            echo "Validating data quality..."
+            python3 scripts/validate_data_quality.py data/processed/url_features_modelready.csv url
+            python3 scripts/validate_data_quality.py data/processed/dns_features_modelready.csv dns
+            python3 scripts/validate_data_quality.py data/processed/whois_features_modelready.csv whois
 
-          if [ "$DNS_COUNT" -eq "0" ] || [ "$WHOIS_COUNT" -eq "0" ]; then
-            echo "❌ No data files found in VM for the last $DAYS_TO_MERGE days"
-            echo "This is expected if the VM processing pipeline hasn't run yet"
-            exit 1
+            # Get row counts
+            DNS_ROWS=$(tail -n +2 data/processed/dns_features_modelready.csv | wc -l | tr -d ' ')
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "total_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
+          else
+            echo "No data growth - skipping retraining"
+            echo "needs_retraining=false" >> $GITHUB_OUTPUT
+            echo "success=false" >> $GITHUB_OUTPUT
           fi
 
-          # Copy files to /tmp on VM first (since gcloud scp can't use sudo)
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              filename=$(basename "$file")
-              echo "Copying $filename to /tmp..."
-              gcloud compute ssh ${{ env.VM_NAME }} \
-                --zone=${{ env.GCP_ZONE }} \
-                --command="sudo cp \"$file\" \"/tmp/$filename\" && sudo chmod 644 \"/tmp/$filename\""
-            fi
-          done < dns_files.txt
-
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              filename=$(basename "$file")
-              echo "Copying $filename to /tmp..."
-              gcloud compute ssh ${{ env.VM_NAME }} \
-                --zone=${{ env.GCP_ZONE }} \
-                --command="sudo cp \"$file\" \"/tmp/$filename\" && sudo chmod 644 \"/tmp/$filename\""
-            fi
-          done < whois_files.txt
-
-          # Now download all files from /tmp
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              filename=$(basename "$file")
-              echo "Downloading $filename..."
-              gcloud compute scp ${{ env.VM_NAME }}:/tmp/$filename \
-                vm_data/weekly/$filename \
-                --zone=${{ env.GCP_ZONE }}
-            fi
-          done < dns_files.txt
-
-          while IFS= read -r file; do
-            if [ -n "$file" ]; then
-              filename=$(basename "$file")
-              echo "Downloading $filename..."
-              gcloud compute scp ${{ env.VM_NAME }}:/tmp/$filename \
-                vm_data/weekly/$filename \
-                --zone=${{ env.GCP_ZONE }}
-            fi
-          done < whois_files.txt
-
-          echo "Downloads complete!"
-          ls -lh vm_data/weekly/
-
-      - name: Merge weekly data
-        id: merge
-        run: |
-          python3 << 'EOF'
-          import pandas as pd
-          import glob
-          import os
-          from datetime import datetime
-
-          print("=" * 60)
-          print("MERGING WEEKLY DATA")
-          print("=" * 60)
-
-          # Get all DNS and WHOIS files
-          dns_files = sorted(glob.glob('vm_data/weekly/dns_*.csv'))
-          whois_files = sorted(glob.glob('vm_data/weekly/whois_*.csv'))
-
-          print(f"\nFound {len(dns_files)} DNS files")
-          print(f"Found {len(whois_files)} WHOIS files")
-
-          if len(dns_files) == 0 or len(whois_files) == 0:
-              print("❌ No data files found!")
-              sys.exit(1)
-
-          # Read and merge DNS data
-          dns_dfs = []
-          for f in dns_files:
-              print(f"Reading {os.path.basename(f)}...")
-              df = pd.read_csv(f)
-              dns_dfs.append(df)
-
-          dns_merged = pd.concat(dns_dfs, ignore_index=True)
-          print(f"DNS merged: {len(dns_merged)} rows")
-
-          # Read and merge WHOIS data
-          whois_dfs = []
-          for f in whois_files:
-              print(f"Reading {os.path.basename(f)}...")
-              df = pd.read_csv(f)
-              whois_dfs.append(df)
-
-          whois_merged = pd.concat(whois_dfs, ignore_index=True)
-          print(f"WHOIS merged: {len(whois_merged)} rows")
-
-          # Remove duplicates based on URL
-          dns_merged = dns_merged.drop_duplicates(subset=['url'], keep='last')
-          whois_merged = whois_merged.drop_duplicates(subset=['url'], keep='last')
-
-          print(f"\nAfter deduplication:")
-          print(f"DNS: {len(dns_merged)} rows")
-          print(f"WHOIS: {len(whois_merged)} rows")
-
-          # Save merged files
-          os.makedirs('vm_data/merged', exist_ok=True)
-          dns_merged.to_csv('vm_data/merged/dns_weekly.csv', index=False)
-          whois_merged.to_csv('vm_data/merged/whois_weekly.csv', index=False)
-
-          print(f"\n✅ Weekly data merged successfully!")
-          print(f"Total rows: {len(dns_merged)}")
-
-          # Write output
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"success=true\n")
-              f.write(f"total_rows={len(dns_merged)}\n")
-          EOF
-
-      - name: Upload merged data as artifact
+      - name: Upload model-ready data as artifact
+        if: steps.prepare.outputs.needs_retraining == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-merged-data-${{ github.run_number }}
-          path: vm_data/merged/
+          name: weekly-modelready-data-${{ github.run_number }}
+          path: data/processed/*_modelready*.csv
           retention-days: 30
 
       - name: Stop VM
@@ -227,7 +124,7 @@ jobs:
     name: Retrain All Models with Weekly Data
     runs-on: ubuntu-latest
     needs: merge-weekly-data
-    if: needs.merge-weekly-data.outputs.data_merged == 'true'
+    if: needs.merge-weekly-data.outputs.needs_retraining == 'true'
 
     steps:
       - name: Checkout code
@@ -242,75 +139,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download merged weekly data
+      - name: Download model-ready data
         uses: actions/download-artifact@v4
         with:
-          name: weekly-merged-data-${{ github.run_number }}
-          path: vm_data/merged/
-
-      - name: Merge with main dataset
-        run: |
-          python3 << 'EOF'
-          import pandas as pd
-          import os
-
-          print("=" * 60)
-          print("MERGING WITH MAIN DATASET")
-          print("=" * 60)
-
-          # Read main datasets
-          main_dns = pd.read_csv('data/phishing_features_complete_dns.csv')
-          main_whois = pd.read_csv('data/phishing_features_complete_whois.csv')
-
-          print(f"Main dataset:")
-          print(f"  DNS: {len(main_dns)} rows")
-          print(f"  WHOIS: {len(main_whois)} rows")
-
-          # Read weekly data
-          weekly_dns = pd.read_csv('vm_data/merged/dns_weekly.csv')
-          weekly_whois = pd.read_csv('vm_data/merged/whois_weekly.csv')
-
-          print(f"\nWeekly data:")
-          print(f"  DNS: {len(weekly_dns)} rows")
-          print(f"  WHOIS: {len(weekly_whois)} rows")
-
-          # Combine and deduplicate
-          combined_dns = pd.concat([main_dns, weekly_dns], ignore_index=True)
-          combined_whois = pd.concat([main_whois, weekly_whois], ignore_index=True)
-
-          combined_dns = combined_dns.drop_duplicates(subset=['url'], keep='last')
-          combined_whois = combined_whois.drop_duplicates(subset=['url'], keep='last')
-
-          print(f"\nCombined dataset (after deduplication):")
-          print(f"  DNS: {len(combined_dns)} rows")
-          print(f"  WHOIS: {len(combined_whois)} rows")
-
-          # Save updated datasets
-          combined_dns.to_csv('data/phishing_features_complete_dns.csv', index=False)
-          combined_whois.to_csv('data/phishing_features_complete_whois.csv', index=False)
-
-          print(f"\n✅ Main dataset updated!")
-          EOF
+          name: weekly-modelready-data-${{ github.run_number }}
+          path: data/processed/
 
       - name: Train URL model
-        run: |
-          echo "Training URL model..."
-          python3 scripts/train_url_model.py
+        run: python3 scripts/train_url_model.py
 
       - name: Train DNS model
-        run: |
-          echo "Training DNS model..."
-          python3 scripts/train_dns_model.py
+        run: python3 scripts/train_dns_model.py
 
       - name: Train WHOIS model
-        run: |
-          echo "Training WHOIS model..."
-          python3 scripts/train_whois_model.py
-
-      - name: Train Ensemble model
-        run: |
-          echo "Training Ensemble model..."
-          python3 scripts/train_ensemble.py
+        run: python3 scripts/train_whois_model.py
 
       - name: Upload trained models as artifact
         uses: actions/upload-artifact@v4
@@ -327,20 +169,23 @@ jobs:
           git config user.name "EpbAiD"
           git config user.email "eeshanpbhanap@gmail.com"
 
-          # Add updated datasets
-          git add data/phishing_features_complete_dns.csv
-          git add data/phishing_features_complete_whois.csv
+          # Add updated main datasets
+          git add data/phishing_features_complete_*.csv
 
-          # Add updated models
+          # Add model-ready datasets
+          git add data/processed/*_modelready*.csv
+
+          # Add trained models
           git add models/
 
           # Commit with informative message
           TOTAL_ROWS="${{ needs.merge-weekly-data.outputs.total_rows }}"
-          git commit -m "Weekly model retraining with ${TOTAL_ROWS} new URLs
+          git commit -m "Weekly model retraining with ${TOTAL_ROWS} total rows
 
-          - Merged data from last 7 days
-          - Updated main datasets
-          - Retrained all models (URL, DNS, WHOIS, Ensemble)
+          - Downloaded incremental data from GCS
+          - Merged into main datasets (URL, DNS, WHOIS separated)
+          - Prepared model-ready datasets with bucket column
+          - Retrained all models (URL, DNS, WHOIS)
           - Automated via GitHub Actions
 
           🤖 Generated with Claude Code

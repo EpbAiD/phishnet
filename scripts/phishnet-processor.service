@@ -1,0 +1,17 @@
+[Unit]
+Description=PhishNet VM GCS Processor
+After=network.target google-cloud-ops-agent.service
+
+[Service]
+Type=simple
+User=eeshanbhanap
+WorkingDirectory=/home/eeshanbhanap/phishnet
+ExecStart=/usr/bin/python3 /home/eeshanbhanap/phishnet/scripts/vm_gcs_processor.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/eeshanbhanap/phishnet/logs/vm_processor.log
+StandardError=append:/home/eeshanbhanap/phishnet/logs/vm_processor.log
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
