@@ -25,12 +25,12 @@ NC='\033[0m'
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# VM Configuration (using gcloud)
-VM_NAME="dns-whois-fetch-25"
-VM_ZONE="us-central1-c"
+# GCS Configuration
+GCS_BUCKET="gs://phishnet-pipeline-data"
+GCS_QUEUE="${GCS_BUCKET}/queue"
+GCS_INCREMENTAL="${GCS_BUCKET}/incremental"
+GCS_PROCESSED="${GCS_BUCKET}/processed"
 GCP_PROJECT="coms-452404"
-GCP_ACCOUNT="eb3658@columbia.edu"
-VM_PATH="/home/eeshanbhanap/phishnet"
 
 # Paths
 DATE=$(date +%Y%m%d)
@@ -88,53 +88,30 @@ mv "$TEMP_FILE" "$OUTPUT_FILE"
 log "✅ URL features extracted"
 
 # ============================================================================
-# Step 3: Push to VM Queue
+# Step 3: Upload to Cloud Storage Queue
 # ============================================================================
 log ""
-log "Step 3: Pushing URL batch to VM..."
+log "Step 3: Uploading URL batch to Cloud Storage..."
 
-# Create VM directories if they don't exist
-gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
-    --command="sudo mkdir -p ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs && \
-               sudo chmod 755 ${VM_PATH}/vm_data/url_queue ${VM_PATH}/vm_data/incremental ${VM_PATH}/logs" >> "$LOG_FILE" 2>&1 || {
-    log_error "Failed to create VM directories (VM may be unreachable)"
-    log_info "Skipping VM upload - batch saved locally for manual upload"
-    exit 0
-}
-
-# Upload batch file to /tmp first, then move to target directory with sudo
-gcloud compute scp "$OUTPUT_FILE" "${VM_NAME}:/tmp/batch_${DATE}.csv" \
-    --zone="$VM_ZONE" --project="$GCP_PROJECT" >> "$LOG_FILE" 2>&1
-
-gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
-    --command="sudo mv /tmp/batch_${DATE}.csv ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv && \
-               sudo chown eeshanbhanap:eeshanbhanap ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv" >> "$LOG_FILE" 2>&1
+# Upload batch file to GCS queue
+gcloud storage cp "$OUTPUT_FILE" "${GCS_QUEUE}/batch_${DATE}.csv" >> "$LOG_FILE" 2>&1
 
 if [ $? -eq 0 ]; then
-    log "✅ Batch uploaded to VM: ${VM_PATH}/vm_data/url_queue/batch_${DATE}.csv"
+    log "✅ Batch uploaded to GCS: ${GCS_QUEUE}/batch_${DATE}.csv"
 else
-    log_error "Failed to upload batch to VM"
+    log_error "Failed to upload batch to Cloud Storage"
     exit 1
 fi
 
 # ============================================================================
-# Step 4: VM Processor Should Be Running (Started by vm_start.sh)
+# Step 4: Batch Ready for VM Processing
 # ============================================================================
 log ""
-log "Step 4: Checking VM processor status..."
+log "Step 4: Batch queued for processing..."
 
-# Check if VM processor is running
-VM_RUNNING=$(gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" \
-    --command="pgrep -f vm_daily_processor || echo 'NOT_RUNNING'" 2>/dev/null)
-
-if [ "$VM_RUNNING" = "NOT_RUNNING" ]; then
-    log_error "VM processor is NOT running!"
-    log_info "Please start it manually: ./scripts/vm_start.sh"
-    exit 1
-else
-    log "✅ VM processor is running (PID: $VM_RUNNING)"
-    log "   Processor will automatically detect and process new batch"
-fi
+log "✅ Batch ready for VM processing"
+log "   VM will automatically poll GCS and process new batches"
+log "   Monitor progress with: gcloud storage ls ${GCS_INCREMENTAL}/"
 
 # ============================================================================
 # Step 5: Archive Local Batch
@@ -158,10 +135,10 @@ log "VM processing: DNS (38 features) + WHOIS (12 features)"
 log "Expected completion: ~8 hours (10:00 AM next morning)"
 log ""
 log "Next steps:"
-log "  1. Wait for VM to finish processing (~8 hours)"
-log "  2. Check VM status: ./scripts/vm_status.sh"
-log "  3. Sync results: ./scripts/vm_sync.sh"
-log "  4. Daily retrain will run automatically at 10:00 AM"
+log "  1. VM will poll GCS and process batch (~8 hours)"
+log "  2. Check GCS for results: gcloud storage ls ${GCS_INCREMENTAL}/"
+log "  3. GitHub Actions will merge results and retrain models"
+log "  4. Monitor workflow at: https://github.com/EpbAiD/phishnet/actions"
 log "========================================="
 
 exit 0
