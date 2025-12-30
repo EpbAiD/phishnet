@@ -22,8 +22,9 @@ jobs:
     name: Merge Weekly Data from VM
     runs-on: ubuntu-latest
     outputs:
-      data_merged: ${{ steps.merge.outputs.success }}
-      total_rows: ${{ steps.merge.outputs.total_rows }}
+      needs_retraining: ${{ steps.prepare.outputs.needs_retraining }}
+      data_merged: ${{ steps.prepare.outputs.success }}
+      total_rows: ${{ steps.prepare.outputs.total_rows }}
 
     steps:
       - name: Checkout code
