@@ -15,7 +15,6 @@ Usage:
 
 import os
 import sys
-import glob
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -188,8 +187,7 @@ def merge_into_main_datasets(dns_files, whois_files, url_feature_files):
         df_whois_combined.to_csv(MAIN_WHOIS, index=False)
         log(f"✅ Saved WHOIS: {MAIN_WHOIS}")
 
-    # Merge URL features (from local extraction, not from batches)
-    url_feature_files = sorted(glob.glob("data/url_queue/url_features_*.csv"))
+    # Merge URL features (downloaded from GCS)
     if url_feature_files:
         url_dfs = []
         for f in url_feature_files:
