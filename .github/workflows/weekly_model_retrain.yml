@@ -69,16 +69,28 @@ jobs:
 
           echo "Downloading last $DAYS_TO_MERGE days of processed data..."
 
-          # Get list of timestamped files from the last week
+          # Get list of timestamped files from the last week (filter out SSH noise)
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
-            > dns_files.txt
+            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'dns_*.csv' -mtime -${DAYS_TO_MERGE} -type f 2>/dev/null || true" \
+            | grep -E '\.csv$' > dns_files.txt || true
 
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f" \
-            > whois_files.txt
+            --command="sudo find /home/eeshanbhanap/phishnet/vm_data/incremental/ -name 'whois_*.csv' -mtime -${DAYS_TO_MERGE} -type f 2>/dev/null || true" \
+            | grep -E '\.csv$' > whois_files.txt || true
+
+          # Check if any files were found
+          DNS_COUNT=$(wc -l < dns_files.txt | tr -d ' ')
+          WHOIS_COUNT=$(wc -l < whois_files.txt | tr -d ' ')
+
+          echo "Found $DNS_COUNT DNS files and $WHOIS_COUNT WHOIS files"
+
+          if [ "$DNS_COUNT" -eq "0" ] || [ "$WHOIS_COUNT" -eq "0" ]; then
+            echo "❌ No data files found in VM for the last $DAYS_TO_MERGE days"
+            echo "This is expected if the VM processing pipeline hasn't run yet"
+            exit 1
+          fi
 
           # Copy files to /tmp on VM first (since gcloud scp can't use sudo)
           while IFS= read -r file; do
