@@ -170,27 +170,28 @@ jobs:
           git config user.name "EpbAiD"
           git config user.email "eeshanpbhanap@gmail.com"
 
-          # Add updated main datasets
-          git add data/phishing_features_complete_*.csv
-
-          # Add model-ready datasets
-          git add data/processed/*_modelready*.csv
-
           # Add trained models
           git add models/
+
+          # Add model-ready datasets (downloaded from artifact)
+          git add data/processed/*_modelready*.csv || true
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
 
           # Commit with informative message
           TOTAL_ROWS="${{ needs.merge-weekly-data.outputs.total_rows }}"
           git commit -m "Weekly model retraining with ${TOTAL_ROWS} total rows
 
-          - Downloaded incremental data from GCS
-          - Merged into main datasets (URL, DNS, WHOIS separated)
-          - Prepared model-ready datasets with bucket column
           - Retrained all models (URL, DNS, WHOIS)
+          - Models saved to models/ directory
           - Automated via GitHub Actions
 
           🤖 Generated with Claude Code
-          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>" || echo "No changes to commit"
+          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
           git push
 
