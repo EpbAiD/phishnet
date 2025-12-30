@@ -17,12 +17,45 @@ permissions:
 
 env:
   GCP_PROJECT_ID: coms-452404
+  GCP_ZONE: us-central1-c
+  VM_NAME: dns-whois-fetch-25
   GCS_BUCKET: gs://phishnet-pipeline-data
 
 jobs:
+  start-vm:
+    name: Start VM for Processing
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start VM if stopped
+        run: |
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --format="get(status)")
+
+          if [ "$VM_STATUS" = "TERMINATED" ]; then
+            echo "Starting VM..."
+            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+            echo "Waiting for VM to be ready..."
+            sleep 30
+            echo "✅ VM started"
+          else
+            echo "VM is already running (status: $VM_STATUS)"
+          fi
+
   collect-urls:
     name: Collect URLs from Sources
     runs-on: ubuntu-latest
+    needs: start-vm
     timeout-minutes: 30
 
     steps:

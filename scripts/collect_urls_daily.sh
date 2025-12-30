@@ -81,19 +81,18 @@ log "✅ Fetched $URL_COUNT URLs"
 log ""
 log "Step 2: Extracting URL features locally..."
 
-TEMP_FILE="${OUTPUT_FILE}.tmp"
-python3 scripts/extract_url_features.py "$OUTPUT_FILE" "$TEMP_FILE" >> "$LOG_FILE" 2>&1
-mv "$TEMP_FILE" "$OUTPUT_FILE"
+URL_FEATURES_FILE="data/url_queue/url_features_${DATE}.csv"
+python3 scripts/extract_url_features.py "$OUTPUT_FILE" "$URL_FEATURES_FILE" >> "$LOG_FILE" 2>&1
 
-log "✅ URL features extracted"
+log "✅ URL features extracted and saved to: $URL_FEATURES_FILE"
 
 # ============================================================================
-# Step 3: Upload to Cloud Storage Queue
+# Step 3: Upload URL batch to Cloud Storage Queue (URL + Label ONLY)
 # ============================================================================
 log ""
-log "Step 3: Uploading URL batch to Cloud Storage..."
+log "Step 3: Uploading URL batch to Cloud Storage (url + label only)..."
 
-# Upload batch file to GCS queue
+# Upload ORIGINAL batch file (url, label, source) to GCS queue for VM processing
 gcloud storage cp "$OUTPUT_FILE" "${GCS_QUEUE}/batch_${DATE}.csv" >> "$LOG_FILE" 2>&1
 
 if [ $? -eq 0 ]; then

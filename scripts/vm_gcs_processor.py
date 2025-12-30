@@ -9,105 +9,125 @@ This script runs continuously on the VM and:
 4. Moves processed batch to GCS processed folder
 """
 
-import os
 import sys
 import time
-import subprocess
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
+from google.cloud import storage
 
 # Configuration
-GCS_BUCKET = "gs://phishnet-pipeline-data"
-GCS_QUEUE = f"{GCS_BUCKET}/queue"
-GCS_INCREMENTAL = f"{GCS_BUCKET}/incremental"
-GCS_PROCESSED = f"{GCS_BUCKET}/processed"
+BUCKET_NAME = "phishnet-pipeline-data"
+QUEUE_FOLDER = "queue"
+INCREMENTAL_FOLDER = "incremental"
+PROCESSED_FOLDER = "processed"
 POLL_INTERVAL = 300  # 5 minutes
 WORK_DIR = Path("/tmp/phishnet_processing")
 
-# Import feature extraction functions (assuming they exist in the repo)
+# Initialize GCS client (uses VM metadata service for auth)
+storage_client = storage.Client()
+
+# Import feature extraction functions
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from src.features.dns_ipwhois import extract_single_domain_features as extract_dns_single
+from src.features.whois import extract_single_whois_features as extract_whois_single
 
 def log(message):
     """Log with timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {message}", flush=True)
 
-def run_command(cmd, check=True):
-    """Run shell command and return output."""
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=check
-        )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        log(f"Command failed: {cmd}")
-        log(f"Error: {e.stderr}")
-        if check:
-            raise
-        return None
-
 def list_queue_files():
     """List all batch files in GCS queue."""
-    output = run_command(f"gcloud storage ls {GCS_QUEUE}/batch_*.csv 2>/dev/null", check=False)
-    if not output:
-        return []
-    return [line.strip() for line in output.split('\n') if line.strip()]
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blobs = bucket.list_blobs(prefix=f"{QUEUE_FOLDER}/batch_")
+    return [blob.name for blob in blobs if blob.name.endswith('.csv')]
 
-def download_batch(gcs_path, local_path):
+def download_batch(blob_name, local_path):
     """Download batch file from GCS."""
-    log(f"Downloading {gcs_path}...")
-    run_command(f"gcloud storage cp {gcs_path} {local_path}")
+    log(f"Downloading {blob_name}...")
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    blob.download_to_filename(local_path)
     log(f"Downloaded to {local_path}")
 
-def upload_results(local_path, gcs_path):
+def upload_results(local_path, blob_name):
     """Upload results to GCS."""
-    log(f"Uploading {local_path} to {gcs_path}...")
-    run_command(f"gcloud storage cp {local_path} {gcs_path}")
-    log(f"Uploaded to {gcs_path}")
+    log(f"Uploading {local_path} to gs://{BUCKET_NAME}/{blob_name}...")
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_filename(local_path)
+    log(f"Uploaded to gs://{BUCKET_NAME}/{blob_name}")
 
-def move_to_processed(gcs_path):
+def move_to_processed(blob_name):
     """Move batch file to processed folder."""
-    filename = Path(gcs_path).name
-    processed_path = f"{GCS_PROCESSED}/{filename}"
-    log(f"Moving {gcs_path} to processed...")
-    run_command(f"gcloud storage mv {gcs_path} {processed_path}")
-    log(f"Moved to {processed_path}")
+    filename = Path(blob_name).name
+    processed_name = f"{PROCESSED_FOLDER}/{filename}"
+    log(f"Moving {blob_name} to processed...")
+    bucket = storage_client.bucket(BUCKET_NAME)
+    source_blob = bucket.blob(blob_name)
+    bucket.copy_blob(source_blob, bucket, processed_name)
+    source_blob.delete()
+    log(f"Moved to {processed_name}")
 
 def extract_dns_features(batch_df):
-    """Extract DNS features for URLs."""
-    # TODO: Implement actual DNS feature extraction
-    # For now, simulate processing
+    """Extract DNS features for URLs (DNS ONLY - no URL features merged)."""
     log(f"Extracting DNS features for {len(batch_df)} URLs...")
-    time.sleep(2)  # Simulate work
 
-    # In production, this would call your actual DNS extraction code
-    # dns_features = extract_dns_features_from_dataframe(batch_df)
+    dns_features = []
+    for idx, row in batch_df.iterrows():
+        url = row['url']
+        label = row.get('label', 'unknown')
 
-    log("DNS features extracted")
-    return batch_df  # Return with added DNS columns
+        try:
+            features = extract_dns_single(url)
+            # Keep ONLY DNS features + url + label (no URL features)
+            features['url'] = url
+            features['label'] = label
+            dns_features.append(features)
+        except Exception as e:
+            log(f"Error extracting DNS for {url}: {e}")
+            dns_features.append({'url': url, 'label': label, 'error': str(e)})
+
+        # Log progress every 100 URLs
+        if (idx + 1) % 100 == 0:
+            log(f"  Processed {idx + 1}/{len(batch_df)} URLs")
+
+    result_df = pd.DataFrame(dns_features)
+    log(f"DNS features extracted: {len(result_df)} rows")
+    return result_df
 
 def extract_whois_features(batch_df):
-    """Extract WHOIS features for URLs."""
-    # TODO: Implement actual WHOIS feature extraction
-    # For now, simulate processing
+    """Extract WHOIS features for URLs (WHOIS ONLY - no URL features merged)."""
     log(f"Extracting WHOIS features for {len(batch_df)} URLs...")
-    time.sleep(2)  # Simulate work
 
-    # In production, this would call your actual WHOIS extraction code
-    # whois_features = extract_whois_features_from_dataframe(batch_df)
+    whois_features = []
+    for idx, row in batch_df.iterrows():
+        url = row['url']
+        label = row.get('label', 'unknown')
 
-    log("WHOIS features extracted")
-    return batch_df  # Return with added WHOIS columns
+        try:
+            features = extract_whois_single(url, live_lookup=True)
+            # Keep ONLY WHOIS features + url + label (no URL features)
+            features['url'] = url
+            features['label'] = label
+            whois_features.append(features)
+        except Exception as e:
+            log(f"Error extracting WHOIS for {url}: {e}")
+            whois_features.append({'url': url, 'label': label, 'error': str(e)})
 
-def process_batch(batch_file):
+        # Log progress every 100 URLs
+        if (idx + 1) % 100 == 0:
+            log(f"  Processed {idx + 1}/{len(batch_df)} URLs")
+
+    result_df = pd.DataFrame(whois_features)
+    log(f"WHOIS features extracted: {len(result_df)} rows")
+    return result_df
+
+def process_batch(blob_name):
     """Process a single batch file."""
     try:
-        filename = Path(batch_file).name
+        filename = Path(blob_name).name
         log(f"Processing {filename}...")
 
         # Create work directory
@@ -115,7 +135,7 @@ def process_batch(batch_file):
 
         # Download batch
         local_batch = WORK_DIR / filename
-        download_batch(batch_file, local_batch)
+        download_batch(blob_name, local_batch)
 
         # Read batch
         df = pd.read_csv(local_batch)
@@ -137,11 +157,11 @@ def process_batch(batch_file):
         log(f"Saved WHOIS results: {len(whois_df)} rows")
 
         # Upload results to GCS
-        upload_results(dns_result, f"{GCS_INCREMENTAL}/dns_{timestamp}.csv")
-        upload_results(whois_result, f"{GCS_INCREMENTAL}/whois_{timestamp}.csv")
+        upload_results(dns_result, f"{INCREMENTAL_FOLDER}/dns_{timestamp}.csv")
+        upload_results(whois_result, f"{INCREMENTAL_FOLDER}/whois_{timestamp}.csv")
 
         # Move batch to processed
-        move_to_processed(batch_file)
+        move_to_processed(blob_name)
 
         # Cleanup local files
         local_batch.unlink(missing_ok=True)
@@ -162,20 +182,20 @@ def main():
     log("="*60)
     log("VM GCS Processor Started")
     log("="*60)
-    log(f"Bucket: {GCS_BUCKET}")
-    log(f"Queue: {GCS_QUEUE}")
+    log(f"Bucket: gs://{BUCKET_NAME}")
+    log(f"Queue: gs://{BUCKET_NAME}/{QUEUE_FOLDER}")
     log(f"Poll interval: {POLL_INTERVAL}s")
     log("="*60)
 
     while True:
         try:
             # List queue files
-            queue_files = list_queue_files()
+            queue_blobs = list_queue_files()
 
-            if queue_files:
-                log(f"Found {len(queue_files)} batch(es) to process")
-                for batch_file in queue_files:
-                    process_batch(batch_file)
+            if queue_blobs:
+                log(f"Found {len(queue_blobs)} batch(es) to process")
+                for blob_name in queue_blobs:
+                    process_batch(blob_name)
             else:
                 log("No batches in queue, waiting...")
 
