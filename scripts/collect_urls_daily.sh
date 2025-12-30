@@ -103,6 +103,21 @@ else
 fi
 
 # ============================================================================
+# Step 3.5: Upload URL Features to GCS Incremental (for weekly merge)
+# ============================================================================
+log ""
+log "Step 3.5: Uploading URL features to GCS incremental folder..."
+
+gcloud storage cp "$URL_FEATURES_FILE" "${GCS_INCREMENTAL}/url_features_${DATE}.csv" >> "$LOG_FILE" 2>&1
+
+if [ $? -eq 0 ]; then
+    log "✅ URL features uploaded to GCS: ${GCS_INCREMENTAL}/url_features_${DATE}.csv"
+else
+    log_error "Failed to upload URL features to Cloud Storage"
+    exit 1
+fi
+
+# ============================================================================
 # Step 4: Batch Ready for VM Processing
 # ============================================================================
 log ""

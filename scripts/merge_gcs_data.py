@@ -38,13 +38,13 @@ def log(message):
 
 def download_incremental_data(days: int = 7):
     """
-    Download incremental DNS/WHOIS data from GCS.
+    Download incremental DNS/WHOIS/URL data from GCS.
 
     Args:
         days: Number of days to look back
 
     Returns:
-        (dns_files, whois_files): Lists of local file paths
+        (dns_files, whois_files, url_files): Lists of local file paths
     """
     log(f"Downloading last {days} days of incremental data from GCS...")
 
@@ -60,6 +60,7 @@ def download_incremental_data(days: int = 7):
 
     dns_blobs = []
     whois_blobs = []
+    url_blobs = []
 
     for blob in blobs:
         if blob.name.endswith('.csv'):
@@ -68,18 +69,21 @@ def download_incremental_data(days: int = 7):
                     dns_blobs.append(blob)
                 elif 'whois_' in blob.name:
                     whois_blobs.append(blob)
+                elif 'url_features_' in blob.name:
+                    url_blobs.append(blob)
 
-    log(f"Found {len(dns_blobs)} DNS files and {len(whois_blobs)} WHOIS files")
+    log(f"Found {len(dns_blobs)} DNS files, {len(whois_blobs)} WHOIS files, and {len(url_blobs)} URL files")
 
-    if len(dns_blobs) == 0:
+    if len(dns_blobs) == 0 and len(whois_blobs) == 0 and len(url_blobs) == 0:
         log("No new data to download")
-        return [], []
+        return [], [], []
 
     # Download files
     os.makedirs(LOCAL_INCREMENTAL, exist_ok=True)
 
     dns_files = []
     whois_files = []
+    url_files = []
 
     for blob in dns_blobs:
         filename = os.path.basename(blob.name)
@@ -95,9 +99,16 @@ def download_incremental_data(days: int = 7):
         blob.download_to_filename(local_path)
         whois_files.append(local_path)
 
-    log(f"Downloaded {len(dns_files)} DNS files and {len(whois_files)} WHOIS files")
+    for blob in url_blobs:
+        filename = os.path.basename(blob.name)
+        local_path = os.path.join(LOCAL_INCREMENTAL, filename)
+        log(f"  Downloading {filename}...")
+        blob.download_to_filename(local_path)
+        url_files.append(local_path)
 
-    return dns_files, whois_files
+    log(f"Downloaded {len(dns_files)} DNS files, {len(whois_files)} WHOIS files, and {len(url_files)} URL files")
+
+    return dns_files, whois_files, url_files
 
 
 def merge_into_main_datasets(dns_files, whois_files, url_feature_files):
@@ -215,16 +226,12 @@ def main():
     log(f"Looking back: {days} days")
     log("")
 
-    # Download from GCS
-    dns_files, whois_files = download_incremental_data(days)
-
-    # Get URL feature files from local extraction
-    url_feature_files = sorted(glob.glob("data/url_queue/url_features_*.csv"))
-    log(f"Found {len(url_feature_files)} local URL feature files")
+    # Download from GCS (includes DNS, WHOIS, and URL features)
+    dns_files, whois_files, url_files = download_incremental_data(days)
 
     # Merge into main datasets
-    if dns_files or whois_files or url_feature_files:
-        merge_into_main_datasets(dns_files, whois_files, url_feature_files)
+    if dns_files or whois_files or url_files:
+        merge_into_main_datasets(dns_files, whois_files, url_files)
     else:
         log("No new data to merge")
 
