@@ -112,6 +112,13 @@ def get_models_for_dataset(
     # Decide availability of heavy models
     heavy_ok = allow_heavy and (n_rows <= 120_000)
 
+    # Calculate adaptive n_neighbors for KNN
+    # With 5-fold CV, training fold is 80% of data
+    # Rule: n_neighbors = min(31, max(3, int(n_rows * 0.8 / 3)))
+    # This ensures: 3 <= n_neighbors <= 31 and n_neighbors < training_size
+    max_train_size = int(n_rows * 0.8)  # 80% for training fold
+    adaptive_k = min(31, max(3, int(max_train_size / 3)))
+
     models = {
         # Linear family ---------------------------------------------------------
         "logreg_elasticnet": Pipeline(
@@ -170,7 +177,7 @@ def get_models_for_dataset(
         "knn": Pipeline(
             [
                 ("scaler", StandardScaler()),
-                ("clf", KNeighborsClassifier(n_neighbors=31)),
+                ("clf", KNeighborsClassifier(n_neighbors=adaptive_k)),
             ]
         ),
         "cnb": ComplementNB(),
