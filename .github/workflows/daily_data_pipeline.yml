@@ -17,9 +17,7 @@ permissions:
 
 env:
   GCP_PROJECT_ID: coms-452404
-  GCP_ZONE: us-central1-c
-  VM_NAME: dns-whois-fetch-25
-  GCP_ACCOUNT: eb3658@columbia.edu
+  GCS_BUCKET: gs://phishnet-pipeline-data
 
 jobs:
   collect-urls:
@@ -49,35 +47,6 @@ jobs:
       - name: Setup GCloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Start VM if stopped
-        run: |
-          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} \
-            --format="get(status)" || echo "NOT_FOUND")
-
-          if [ "$VM_STATUS" = "TERMINATED" ] || [ "$VM_STATUS" = "STOPPED" ]; then
-            echo "Starting VM..."
-            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
-
-            # Wait for VM to be ready
-            echo "Waiting for VM to be ready..."
-            sleep 30
-
-            # Wait for SSH to be available
-            for i in {1..12}; do
-              if gcloud compute ssh ${{ env.VM_NAME }} \
-                --zone=${{ env.GCP_ZONE }} \
-                --command="echo ready" 2>/dev/null; then
-                echo "VM is ready!"
-                break
-              fi
-              echo "Waiting for SSH... (attempt $i/12)"
-              sleep 10
-            done
-          else
-            echo "VM is already running (status: $VM_STATUS)"
-          fi
-
       - name: Run URL collection script
         run: |
           chmod +x scripts/collect_urls_daily.sh
@@ -85,22 +54,18 @@ jobs:
         env:
           NUM_URLS: ${{ github.event.inputs.num_urls || '1000' }}
 
-      - name: Verify VM processor started
+      - name: Verify GCS upload
         run: |
-          echo "Checking if VM processor is running..."
-          VM_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} \
-            --command="pgrep -f vm_daily_processor || echo 'NOT_RUNNING'" 2>/dev/null)
+          TIMESTAMP=$(date +%Y%m%d)
+          echo "Verifying batch uploaded to Cloud Storage..."
 
-          if [ "$VM_RUNNING" = "NOT_RUNNING" ] || [ -z "$VM_RUNNING" ]; then
-            echo "⚠️ VM processor not currently running"
-            echo "Note: This is expected if no daily processing VM is set up"
-            echo "Batch file has been uploaded and will be processed once VM processor starts"
-            exit 0
+          if gcloud storage ls ${{ env.GCS_BUCKET }}/queue/batch_${TIMESTAMP}.csv; then
+            echo "✅ Batch successfully uploaded to GCS"
+            echo "   Location: ${{ env.GCS_BUCKET }}/queue/batch_${TIMESTAMP}.csv"
+            echo "   VM will poll and process automatically"
           else
-            echo "✅ VM processor is running (PID: $VM_RUNNING)"
-            echo "Batch will be automatically processed"
-            exit 0
+            echo "❌ Batch file not found in GCS"
+            exit 1
           fi
 
       - name: Get collection timestamp
