@@ -11,6 +11,10 @@ on:
         required: false
         default: '1000'
 
+permissions:
+  contents: read
+  actions: write
+
 env:
   GCP_PROJECT_ID: coms-452404
   GCP_ZONE: us-central1-c
