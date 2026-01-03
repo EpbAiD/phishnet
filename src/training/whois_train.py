@@ -129,6 +129,10 @@ def train_all_whois_models(subset=None):
     df_main = collapse_binary_labels(pd.read_csv(DATA_MAIN))
     df_imp = collapse_binary_labels(pd.read_csv(DATA_IMPUTED))
 
+    # Use only WHOIS columns from imputed file (it may have extra URL features merged)
+    whois_cols = [c for c in df_main.columns if c in df_imp.columns]
+    df_imp = df_imp[whois_cols]
+
     assert set(df_main.columns) == set(
         df_imp.columns
     ), "❌ Column mismatch between WHOIS datasets!"
@@ -187,7 +191,12 @@ def train_all_whois_models(subset=None):
 
         X_full = make_non_negative_if_needed(name, X)
         model.fit(X_full, y)
-        joblib.dump(model, f"{MODELDIR}/whois_{name}.pkl")
+        model_path = f"{MODELDIR}/whois_{name}.pkl"
+        joblib.dump(model, model_path)
+
+        # Save feature column order for deployment
+        feature_cols_path = f"{MODELDIR}/whois_{name}_feature_cols.pkl"
+        joblib.dump(list(X.columns), feature_cols_path)
 
         print(
             f"💾 saved whois_{name}.pkl | ROC={mean_stats['roc_auc']:.4f} | F1={mean_stats['phish_f1']:.4f}"

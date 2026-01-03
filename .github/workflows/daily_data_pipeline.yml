@@ -2,8 +2,8 @@ name: Daily Data Collection & Processing
 
 on:
   schedule:
-    # Run at 2 AM UTC daily (adjust timezone as needed)
-    - cron: '0 2 * * *'
+    # Run daily at 9 AM EST (14:00 UTC)
+    - cron: '0 14 * * *'
   workflow_dispatch:  # Allow manual trigger
     inputs:
       num_urls:
