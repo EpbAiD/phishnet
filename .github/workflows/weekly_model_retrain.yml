@@ -1,9 +1,9 @@
 name: Weekly Model Retraining
 
 on:
-  # Run weekly on Sundays at 3 AM UTC (after data collection throughout the week)
+  # Run weekly on Sundays at 9 AM EST (14:00 UTC)
   schedule:
-    - cron: '0 3 * * 0'
+    - cron: '0 14 * * 0'
   workflow_dispatch:  # Allow manual trigger
     inputs:
       days_to_merge:

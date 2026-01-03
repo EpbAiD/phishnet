@@ -202,6 +202,10 @@ def train_all_dns_models(subset: list[str] | None = None):
         model_path = f"{MODELDIR}/dns_{name}.pkl"
         joblib.dump(model, model_path)
 
+        # Save feature column order for deployment
+        feature_cols_path = f"{MODELDIR}/dns_{name}_feature_cols.pkl"
+        joblib.dump(list(X.columns), feature_cols_path)
+
         print(
             f"💾 Saved → {model_path} | "
             f"ROC={mean_stats['roc_auc']:.4f} | "

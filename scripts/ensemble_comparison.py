@@ -349,21 +349,31 @@ def load_test_data(test_size: int = 1000) -> Tuple[List[Dict], List[int]]:
     """
     Load test data for all feature types.
 
+    Uses data/test/ directory which contains held-out test set.
+
     Returns:
         (test_features, test_labels)
     """
-    logger.info("Loading test data...")
+    logger.info("Loading test data from data/test/ (held-out test set)...")
 
-    # Load URL features
-    url_df = pd.read_csv("data/processed/url_features_modelready_imputed.csv")
+    # Load URL features from TEST directory
+    url_df = pd.read_csv("data/test/url_features_modelready_imputed.csv")
     url_df = url_df[url_df['label'].isin([0, 1])]  # Filter valid labels
-    url_df = url_df.sample(n=min(test_size, len(url_df)), random_state=42)
+    logger.info(f"Loaded {len(url_df)} test URLs from held-out test set")
 
-    # Load DNS features
-    dns_df = pd.read_csv("data/processed/dns_features_modelready_imputed.csv")
+    # Load DNS features from TEST directory
+    dns_df = pd.read_csv("data/test/dns_features_modelready_imputed.csv")
 
-    # Load WHOIS features
-    whois_df = pd.read_csv("data/processed/whois_features_modelready_imputed.csv")
+    # Load WHOIS features from TEST directory
+    whois_df = pd.read_csv("data/test/whois_features_modelready_imputed.csv")
+
+    # Encode categorical columns to numeric
+    for df in [url_df, dns_df, whois_df]:
+        obj_cols = df.select_dtypes(include=["object"]).columns
+        for col in obj_cols:
+            if col not in ['url']:  # Don't encode URL column
+                df[col] = df[col].astype(str).fillna("MISSING")
+                df[col], _ = pd.factorize(df[col])
 
     # Merge on URL
     test_features = []
@@ -373,24 +383,24 @@ def load_test_data(test_size: int = 1000) -> Tuple[List[Dict], List[int]]:
         url_val = url_row['url']
         label = int(url_row['label'])
 
-        # Get URL features (exclude url and label columns)
-        url_feats = url_row.drop(['url', 'label']).values.reshape(1, -1)
+        # Get URL features (exclude url, label, and bucket columns)
+        url_feats = url_row.drop(['url', 'label', 'bucket'], errors='ignore').values.reshape(1, -1)
 
         # Get DNS features (match by URL)
         dns_row = dns_df[dns_df['url'] == url_val]
         if not dns_row.empty:
-            dns_feats = dns_row.drop(['url', 'label'], axis=1, errors='ignore').values[:1]
+            dns_feats = dns_row.drop(['url', 'label', 'bucket'], axis=1, errors='ignore').values[:1]
         else:
             # Use zeros if DNS features missing
-            dns_feats = np.zeros((1, len(dns_df.columns) - 2))
+            dns_feats = np.zeros((1, len(dns_df.columns) - 3))
 
         # Get WHOIS features (match by URL)
         whois_row = whois_df[whois_df['url'] == url_val]
         if not whois_row.empty:
-            whois_feats = whois_row.drop(['url', 'label'], axis=1, errors='ignore').values[:1]
+            whois_feats = whois_row.drop(['url', 'label', 'bucket'], axis=1, errors='ignore').values[:1]
         else:
             # Use zeros if WHOIS features missing
-            whois_feats = np.zeros((1, len(whois_df.columns) - 2))
+            whois_feats = np.zeros((1, len(whois_df.columns) - 3))
 
         test_features.append({
             "url": url_feats,
