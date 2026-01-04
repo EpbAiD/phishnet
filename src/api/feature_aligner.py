@@ -3,12 +3,15 @@ Feature Column Alignment for Deployment
 ========================================
 Ensures features extracted at runtime match the column order used during training.
 """
+
 import joblib
 import pandas as pd
 from pathlib import Path
 
 
-def align_features(features_dict: dict, model_type: str, model_name: str) -> pd.DataFrame:
+def align_features(
+    features_dict: dict, model_type: str, model_name: str
+) -> pd.DataFrame:
     """
     Align extracted features to match training column order.
 
@@ -112,7 +115,7 @@ def predict_ensemble_aligned(
     dns_features: dict,
     whois_features: dict,
     weights: dict = None,
-    model_names: dict = None
+    model_names: dict = None,
 ) -> dict:
     """
     Make ensemble prediction with automatic feature alignment.
@@ -140,9 +143,9 @@ def predict_ensemble_aligned(
 
     # Weighted ensemble
     ensemble_prob = (
-        weights["url"] * url_prob +
-        weights["dns"] * dns_prob +
-        weights["whois"] * whois_prob
+        weights["url"] * url_prob
+        + weights["dns"] * dns_prob
+        + weights["whois"] * whois_prob
     )
 
     verdict = "PHISHING" if ensemble_prob > 0.5 else "LEGITIMATE"
@@ -153,5 +156,5 @@ def predict_ensemble_aligned(
         "whois_probability": float(whois_prob),
         "ensemble_probability": float(ensemble_prob),
         "verdict": verdict,
-        "confidence": abs(ensemble_prob - 0.5) * 2  # 0 to 1 scale
+        "confidence": abs(ensemble_prob - 0.5) * 2,  # 0 to 1 scale
     }
