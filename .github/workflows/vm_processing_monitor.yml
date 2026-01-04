@@ -39,6 +39,52 @@ jobs:
       - name: Setup GCloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Start VM and trigger processing
+        run: |
+          TIMESTAMP="${{ github.event.inputs.timestamp }}"
+
+          # Check VM status
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --format="get(status)")
+
+          if [ "$VM_STATUS" = "TERMINATED" ]; then
+            echo "Starting VM..."
+            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+            echo "Waiting for VM to be ready..."
+            sleep 60
+          else
+            echo "VM is already running (status: $VM_STATUS)"
+          fi
+
+          # Download batch from GCS to VM
+          echo "Downloading batch ${TIMESTAMP} from GCS to VM..."
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --quiet \
+            --command="gcloud storage cp gs://phishnet-pipeline-data/queue/batch_${TIMESTAMP}.csv ~/phishnet/vm_data/url_queue/ 2>/dev/null || echo 'Batch already downloaded or not found'"
+
+          # Start processor if not running
+          echo "Checking if processor is running..."
+          PROCESSOR_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --quiet \
+            --command="screen -list | grep -c phishnet || echo 0" 2>&1 | tail -n 1)
+          PROCESSOR_RUNNING=${PROCESSOR_RUNNING//[^0-9]/}
+          PROCESSOR_RUNNING=${PROCESSOR_RUNNING:-0}
+
+          if [ "$PROCESSOR_RUNNING" -eq "0" ]; then
+            echo "Starting VM processor..."
+            gcloud compute ssh ${{ env.VM_NAME }} \
+              --zone=${{ env.GCP_ZONE }} \
+              --quiet \
+              --command="cd ~/phishnet && screen -dmS phishnet python3 scripts/vm_daily_processor.py"
+            echo "✅ VM processor started"
+            sleep 10  # Give processor time to start
+          else
+            echo "✅ VM processor already running"
+          fi
+
       - name: Monitor processing progress
         id: monitor
         run: |
