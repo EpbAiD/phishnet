@@ -59,11 +59,17 @@ jobs:
             # Get current row counts
             DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+              --quiet \
+              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv 2>/dev/null || echo 0" 2>&1 | tail -n 1)
+            DNS_ROWS=${DNS_ROWS//[^0-9]/}  # Remove non-numeric characters
+            DNS_ROWS=${DNS_ROWS:-0}  # Default to 0 if empty
 
             WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv" 2>/dev/null || echo "0")
+              --quiet \
+              --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv 2>/dev/null || echo 0" 2>&1 | tail -n 1)
+            WHOIS_ROWS=${WHOIS_ROWS//[^0-9]/}  # Remove non-numeric characters
+            WHOIS_ROWS=${WHOIS_ROWS:-0}  # Default to 0 if empty
 
             echo "DNS rows: $DNS_ROWS / $EXPECTED_ROWS"
             echo "WHOIS rows: $WHOIS_ROWS / $EXPECTED_ROWS"
@@ -79,7 +85,10 @@ jobs:
             # Check if VM processor is still running
             PROCESSOR_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
-              --command="screen -list | grep -c phishnet || echo 0")
+              --quiet \
+              --command="screen -list | grep -c phishnet || echo 0" 2>&1 | tail -n 1)
+            PROCESSOR_RUNNING=${PROCESSOR_RUNNING//[^0-9]/}  # Remove non-numeric characters
+            PROCESSOR_RUNNING=${PROCESSOR_RUNNING:-0}  # Default to 0 if empty
 
             if [ "$PROCESSOR_RUNNING" -eq "0" ] && [ "$DNS_ROWS" -lt "$EXPECTED_ROWS" ]; then
               echo "❌ VM processor stopped but processing incomplete!"
@@ -117,11 +126,17 @@ jobs:
           # Get final row counts
           DNS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv")
+            --quiet \
+            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/dns_${TIMESTAMP}.csv 2>/dev/null || echo 0" 2>&1 | tail -n 1)
+          DNS_ROWS=${DNS_ROWS//[^0-9]/}  # Remove non-numeric characters
+          DNS_ROWS=${DNS_ROWS:-0}  # Default to 0 if empty
 
           WHOIS_ROWS=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv")
+            --quiet \
+            --command="sudo wc -l < /home/eeshanbhanap/phishnet/vm_data/incremental/whois_${TIMESTAMP}.csv 2>/dev/null || echo 0" 2>&1 | tail -n 1)
+          WHOIS_ROWS=${WHOIS_ROWS//[^0-9]/}  # Remove non-numeric characters
+          WHOIS_ROWS=${WHOIS_ROWS:-0}  # Default to 0 if empty
 
           echo "dns_rows=$DNS_ROWS" >> $GITHUB_OUTPUT
           echo "whois_rows=$WHOIS_ROWS" >> $GITHUB_OUTPUT
