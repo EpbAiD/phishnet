@@ -57,12 +57,14 @@ jobs:
             echo "VM is already running (status: $VM_STATUS)"
           fi
 
-          # Download batch from GCS to VM
-          echo "Downloading batch ${TIMESTAMP} from GCS to VM..."
+          # Download ALL pending batches from GCS to VM (handles backlog automatically)
+          echo "Downloading all pending batches from GCS to VM..."
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
             --quiet \
-            --command="gcloud storage cp gs://phishnet-pipeline-data/queue/batch_${TIMESTAMP}.csv /home/eeshanbhanap/phishnet/vm_data/url_queue/ 2>/dev/null || echo 'Batch already downloaded or not found'"
+            --command="gcloud storage cp 'gs://phishnet-pipeline-data/queue/batch_*.csv' /home/eeshanbhanap/phishnet/vm_data/url_queue/ 2>/dev/null || echo 'No batches found'"
+
+          echo "Current batch for monitoring: ${TIMESTAMP}"
 
           # Start processor if not running
           echo "Checking if processor is running..."
