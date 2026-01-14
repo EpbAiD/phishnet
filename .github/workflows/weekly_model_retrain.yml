@@ -1,9 +1,10 @@
-name: Weekly Model Retraining
+name: Model Retraining
 
 on:
-  # Run weekly on Sundays at 9 AM EST (14:00 UTC)
+  # TEMPORARY: Run daily at 9 AM EST (14:00 UTC) for one week to verify VM processing
+  # After verification (week of Jan 14-21, 2026), change back to weekly: '0 14 * * 0'
   schedule:
-    - cron: '0 14 * * 0'
+    - cron: '0 14 * * *'  # Daily at 9 AM EST
   workflow_dispatch:  # Allow manual trigger
     inputs:
       days_to_merge:
@@ -186,11 +187,11 @@ jobs:
 
           # Commit with informative message
           TOTAL_ROWS="${{ needs.merge-weekly-data.outputs.total_rows }}"
-          git commit -m "Weekly model retraining with ${TOTAL_ROWS} total rows
+          git commit -m "Daily model retraining with ${TOTAL_ROWS} total rows
 
           - Retrained all models (URL, DNS, WHOIS)
           - Models saved to models/ directory
-          - Automated via GitHub Actions
+          - Automated via GitHub Actions (temporary daily schedule for VM verification)
 
           🤖 Generated with Claude Code
           Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
