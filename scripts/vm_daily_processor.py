@@ -32,6 +32,7 @@ QUEUE_DIR = "vm_data/url_queue"
 OUTPUT_DIR = "vm_data/incremental"
 READY_DIR = "vm_data/ready"
 LOG_DIR = "logs"
+STATE_FILE = "vm_data/processor_state.txt"  # Track last processed batch
 
 # Create directories
 os.makedirs(QUEUE_DIR, exist_ok=True)
@@ -50,6 +51,49 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# State Tracking
+# ============================================================================
+def get_last_processed_batch():
+    """Get the date of the last successfully processed batch"""
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, 'r') as f:
+                lines = f.readlines()
+                for line in lines:
+                    if line.startswith('last_processed:'):
+                        return line.split(':')[1].strip()
+        except Exception as e:
+            logger.warning(f"Failed to read state file: {e}")
+    return None
+
+
+def update_last_processed_batch(batch_date: str):
+    """Update the last processed batch date"""
+    try:
+        with open(STATE_FILE, 'w') as f:
+            f.write(f"last_processed: {batch_date}\n")
+            f.write(f"updated_at: {datetime.now().isoformat()}\n")
+        logger.info(f"  📝 Updated state: last_processed = {batch_date}")
+    except Exception as e:
+        logger.error(f"Failed to update state file: {e}")
+
+
+def get_processing_stats():
+    """Get statistics about processed batches"""
+    ready_files = glob.glob(f"{READY_DIR}/batch_*.ready")
+    processed_dates = sorted([
+        os.path.basename(f).replace('batch_', '').replace('.ready', '')
+        for f in ready_files
+    ])
+    return {
+        'total_processed': len(processed_dates),
+        'earliest': processed_dates[0] if processed_dates else None,
+        'latest': processed_dates[-1] if processed_dates else None,
+        'dates': processed_dates
+    }
 
 
 # ============================================================================
@@ -194,6 +238,9 @@ def process_queue():
         # Create ready signal
         create_ready_signal(batch_date, dns_file, whois_file, len(df))
 
+        # Update state tracking
+        update_last_processed_batch(batch_date)
+
         # Archive processed queue file
         archive_path = queue_file.replace("/url_queue/", "/url_queue/processed_")
         os.makedirs(os.path.dirname(archive_path), exist_ok=True)
@@ -213,6 +260,22 @@ def main():
     logger.info(f"Queue directory: {QUEUE_DIR}")
     logger.info(f"Output directory: {OUTPUT_DIR}")
     logger.info(f"Ready signals: {READY_DIR}")
+    logger.info(f"State file: {STATE_FILE}")
+    logger.info("")
+
+    # Log current state
+    last_processed = get_last_processed_batch()
+    stats = get_processing_stats()
+
+    if last_processed:
+        logger.info(f"📊 Last processed batch: {last_processed}")
+    else:
+        logger.info(f"📊 No previous batches processed (fresh start)")
+
+    if stats['total_processed'] > 0:
+        logger.info(f"📊 Total batches processed: {stats['total_processed']}")
+        logger.info(f"📊 Date range: {stats['earliest']} to {stats['latest']}")
+
     logger.info("")
     logger.info("Watching for new batches... (Ctrl+C to stop)")
     logger.info("")
