@@ -90,9 +90,11 @@ jobs:
           if [ "$VM_STATUS" = "TERMINATED" ]; then
             echo "Starting VM..."
             gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
-            sleep 60
+            echo "Waiting for VM to be ready..."
+            sleep 90
           else
             echo "VM already running"
+            sleep 10
           fi
 
       - name: Upload batch to VM and extract DNS/WHOIS features
