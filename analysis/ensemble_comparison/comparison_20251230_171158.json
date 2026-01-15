@@ -1,0 +1,216 @@
+[
+  {
+    "ensemble_id": "E3_URL_WHOIS",
+    "name": "URL + WHOIS (Current Production)",
+    "description": "Current production ensemble",
+    "models": {
+      "url": "url_catboost.pkl",
+      "whois": "whois_catboost.pkl"
+    },
+    "weights": {
+      "url": 0.6,
+      "whois": 0.4
+    },
+    "requires_dns": false,
+    "requires_whois": true,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "fpr": 0.0,
+    "test_size": 200,
+    "avg_ms": 0.13306091539561749,
+    "median_ms": 0.12927036732435226,
+    "p50_ms": 0.12927036732435226,
+    "p95_ms": 0.14255822170525786,
+    "p99_ms": 0.20564670208841546,
+    "min_ms": 0.12262491509318352,
+    "max_ms": 0.2505839802324772,
+    "std_ms": 0.01763525190126184,
+    "composite_score": 0.9999049611855297
+  },
+  {
+    "ensemble_id": "E1_URL_ONLY",
+    "name": "URL Only",
+    "description": "Fastest - no external API calls needed",
+    "models": {
+      "url": "url_catboost.pkl"
+    },
+    "weights": {
+      "url": 1.0
+    },
+    "requires_dns": false,
+    "requires_whois": false,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "fpr": 0.0,
+    "test_size": 200,
+    "avg_ms": 0.10205334052443504,
+    "median_ms": 0.05977088585495949,
+    "p50_ms": 0.05977088585495949,
+    "p95_ms": 0.14571843203157173,
+    "p99_ms": 1.0065480973571512,
+    "min_ms": 0.057291239500045776,
+    "max_ms": 1.6949167475104332,
+    "std_ms": 0.23039464003377294,
+    "composite_score": 0.9999028543786456
+  },
+  {
+    "ensemble_id": "E2_URL_DNS",
+    "name": "URL + DNS",
+    "description": "Fast with network signals",
+    "models": {
+      "url": "url_catboost.pkl",
+      "dns": "dns_lgbm.pkl"
+    },
+    "weights": {
+      "url": 0.7,
+      "dns": 0.3
+    },
+    "requires_dns": true,
+    "requires_whois": false,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "fpr": 0.0,
+    "test_size": 200,
+    "avg_ms": 0.6293601356446743,
+    "median_ms": 0.3317710943520069,
+    "p50_ms": 0.3317710943520069,
+    "p95_ms": 0.5202127620577812,
+    "p99_ms": 7.552656005136644,
+    "min_ms": 0.29524974524974823,
+    "max_ms": 13.588333036750555,
+    "std_ms": 1.856456114725802,
+    "composite_score": 0.9996531914919614
+  },
+  {
+    "ensemble_id": "E6_ALL_OPTIMIZED",
+    "name": "All 3 Optimized Weights",
+    "description": "Best accuracy - optimized weights via grid search",
+    "models": {
+      "url": "url_catboost.pkl",
+      "dns": "dns_xgb.pkl",
+      "whois": "whois_lgbm.pkl"
+    },
+    "weights": {
+      "url": 0.5,
+      "dns": 0.2,
+      "whois": 0.3
+    },
+    "requires_dns": true,
+    "requires_whois": true,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "fpr": 0.0,
+    "test_size": 200,
+    "avg_ms": 0.5670150276273489,
+    "median_ms": 0.4941041115671396,
+    "p50_ms": 0.4941041115671396,
+    "p95_ms": 0.7217601407319305,
+    "p99_ms": 2.033316739834841,
+    "min_ms": 0.45287515968084335,
+    "max_ms": 3.0043330043554306,
+    "std_ms": 0.3599271885369433,
+    "composite_score": 0.9995188265728453
+  },
+  {
+    "ensemble_id": "E7_ALL_SPEED",
+    "name": "All 3 Speed-Optimized",
+    "description": "Lowest latency - lightweight models",
+    "models": {
+      "url": "url_lgbm.pkl",
+      "dns": "dns_lgbm.pkl",
+      "whois": "whois_lgbm.pkl"
+    },
+    "weights": {
+      "url": 0.5,
+      "dns": 0.25,
+      "whois": 0.25
+    },
+    "requires_dns": true,
+    "requires_whois": true,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "fpr": 0.0,
+    "test_size": 200,
+    "avg_ms": 0.6932258047163486,
+    "median_ms": 0.6835830863565207,
+    "p50_ms": 0.6835830863565207,
+    "p95_ms": 0.7549346890300512,
+    "p99_ms": 0.8809709083288904,
+    "min_ms": 0.6503751501441002,
+    "max_ms": 0.9846673347055912,
+    "std_ms": 0.04784235889213231,
+    "composite_score": 0.9994967102073132
+  },
+  {
+    "ensemble_id": "E4_DNS_WHOIS",
+    "name": "DNS + WHOIS",
+    "description": "Infrastructure-based detection",
+    "models": {
+      "dns": "dns_catboost.pkl",
+      "whois": "whois_catboost.pkl"
+    },
+    "weights": {
+      "dns": 0.5,
+      "whois": 0.5
+    },
+    "requires_dns": true,
+    "requires_whois": true,
+    "accuracy": 0.505,
+    "precision": 0.5025125628140703,
+    "recall": 1.0,
+    "f1_score": 0.6688963210702341,
+    "fpr": 0.99,
+    "test_size": 200,
+    "avg_ms": 0.1522708684206009,
+    "median_ms": 0.15125004574656487,
+    "p50_ms": 0.15125004574656487,
+    "p95_ms": 0.15644989907741547,
+    "p99_ms": 0.17456922680139536,
+    "min_ms": 0.14858320355415344,
+    "max_ms": 0.18920795992016792,
+    "std_ms": 0.005749469009355179,
+    "composite_score": 0.4717853321743052
+  },
+  {
+    "ensemble_id": "E5_ALL_EQUAL",
+    "name": "All 3 Equal Weights",
+    "description": "Balanced ensemble - all features equal",
+    "models": {
+      "url": "url_catboost.pkl",
+      "dns": "dns_catboost.pkl",
+      "whois": "whois_catboost.pkl"
+    },
+    "weights": {
+      "url": 0.333,
+      "dns": 0.333,
+      "whois": 0.334
+    },
+    "requires_dns": true,
+    "requires_whois": true,
+    "accuracy": 0.505,
+    "precision": 0.5025125628140703,
+    "recall": 1.0,
+    "f1_score": 0.6688963210702341,
+    "fpr": 0.99,
+    "test_size": 200,
+    "avg_ms": 0.21479666233062744,
+    "median_ms": 0.21277088671922684,
+    "p50_ms": 0.21277088671922684,
+    "p95_ms": 0.22635841742157936,
+    "p99_ms": 0.2434836188331246,
+    "min_ms": 0.1854579895734787,
+    "max_ms": 0.25287503376603127,
+    "std_ms": 0.00873579640957665,
+    "composite_score": 0.47173872649540904
+  }
+]

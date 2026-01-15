@@ -1,0 +1,2 @@
+ensemble_id,name,description,models,weights,requires_dns,requires_whois,accuracy,precision,recall,f1_score,fpr,test_size,avg_ms,median_ms,p50_ms,p95_ms,p99_ms,min_ms,max_ms,std_ms,composite_score
+E1_URL_ONLY,URL Only,Fastest - no external API calls needed,{'url': 'url_catboost.pkl'},{'url': 1.0},False,False,0.8,1.0,0.6,0.75,0.0,10,0.6702791200950742,0.05754129961133003,0.05754129961133003,0.7484541740268554,9.903857959434374,0.05533313378691673,12.192708905786276,2.6434995233365344,0.8945010305506489

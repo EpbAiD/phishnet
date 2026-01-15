@@ -1,0 +1,30 @@
+[
+  {
+    "ensemble_id": "E1_URL_ONLY",
+    "name": "URL Only",
+    "description": "Fastest - no external API calls needed",
+    "models": {
+      "url": "url_catboost.pkl"
+    },
+    "weights": {
+      "url": 1.0
+    },
+    "requires_dns": false,
+    "requires_whois": false,
+    "accuracy": 0.8,
+    "precision": 1.0,
+    "recall": 0.6,
+    "f1_score": 0.75,
+    "fpr": 0.0,
+    "test_size": 10,
+    "avg_ms": 0.6702791200950742,
+    "median_ms": 0.05754129961133003,
+    "p50_ms": 0.05754129961133003,
+    "p95_ms": 0.7484541740268554,
+    "p99_ms": 9.903857959434374,
+    "min_ms": 0.05533313378691673,
+    "max_ms": 12.192708905786276,
+    "std_ms": 2.6434995233365344,
+    "composite_score": 0.8945010305506489
+  }
+]
