@@ -31,7 +31,8 @@ def extract_features(batch_file: str, batch_date: str):
         dns_features.append(features)
 
     dns_df = pd.DataFrame(dns_features)
-    dns_output = f"dns_{batch_date}.csv"
+    dns_output = f"vm_data/incremental/dns_{batch_date}.csv"
+    os.makedirs("vm_data/incremental", exist_ok=True)
     dns_df.to_csv(dns_output, index=False)
     print(f"✅ DNS features saved: {dns_output} ({len(dns_df)} rows)")
 
@@ -44,7 +45,7 @@ def extract_features(batch_file: str, batch_date: str):
         whois_features.append(features)
 
     whois_df = pd.DataFrame(whois_features)
-    whois_output = f"whois_{batch_date}.csv"
+    whois_output = f"vm_data/incremental/whois_{batch_date}.csv"
     whois_df.to_csv(whois_output, index=False)
     print(f"✅ WHOIS features saved: {whois_output} ({len(whois_df)} rows)")
 
