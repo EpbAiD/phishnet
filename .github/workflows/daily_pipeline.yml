@@ -68,10 +68,13 @@ jobs:
       # ========================================================================
       - name: Extract URL Features
         run: |
-          echo "Extracting URL features from ${{ env.batch_file }}..."
-          python3 scripts/extract_url_features.py ${{ env.batch_file }}
+          mkdir -p data/processed
 
-          # This creates data/processed/phishing_features_complete_url.csv
+          echo "Extracting URL features from ${{ env.batch_file }}..."
+          python3 scripts/extract_url_features.py \
+            ${{ env.batch_file }} \
+            data/processed/phishing_features_complete_url.csv
+
           echo "✅ URL features extracted"
           wc -l data/processed/phishing_features_complete_url.csv
 
