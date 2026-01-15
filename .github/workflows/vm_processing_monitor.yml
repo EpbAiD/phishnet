@@ -64,8 +64,17 @@ jobs:
 
           echo "Current batch for monitoring: ${TIMESTAMP}"
 
-          # Start processor if not running
-          echo "Checking if processor is running..."
+          # Stop old processor if running (vm_gcs_processor.py)
+          echo "Checking for old processor (vm_gcs_processor.py)..."
+          gcloud compute ssh ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} \
+            --quiet \
+            --command="pkill -f 'vm_gcs_processor.py' && echo '✅ Stopped old processor' || echo 'ℹ️  Old processor not running'"
+
+          sleep 2
+
+          # Start new processor if not running
+          echo "Checking if new processor is running..."
           PROCESSOR_RUNNING=$(gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
             --quiet \
@@ -74,15 +83,15 @@ jobs:
           PROCESSOR_RUNNING=${PROCESSOR_RUNNING:-0}
 
           if [ "$PROCESSOR_RUNNING" -eq "0" ]; then
-            echo "Starting VM processor..."
+            echo "Starting new VM processor..."
             gcloud compute ssh ${{ env.VM_NAME }} \
               --zone=${{ env.GCP_ZONE }} \
               --quiet \
               --command="cd /home/eeshanbhanap/phishnet && screen -dmS phishnet python3 scripts/vm_daily_processor.py"
-            echo "✅ VM processor started"
+            echo "✅ New VM processor started"
             sleep 10  # Give processor time to start
           else
-            echo "✅ VM processor already running"
+            echo "✅ New VM processor already running"
           fi
 
       - name: Verify processor started successfully
