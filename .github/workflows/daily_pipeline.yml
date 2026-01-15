@@ -48,17 +48,17 @@ jobs:
       - name: Collect URLs
         run: |
           NUM_URLS="${{ github.event.inputs.num_urls || '20' }}"
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          BATCH_DATE=$(date +%Y%m%d)
+          BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
+
+          mkdir -p data/url_queue
 
           echo "Collecting $NUM_URLS URLs..."
-          python3 scripts/daily_url_collector.py --num-urls $NUM_URLS
+          python3 scripts/fetch_urls.py $BATCH_FILE $NUM_URLS
 
-          # Batch file will be created as data/url_queue/batch_YYYYMMDD.csv
-          BATCH_FILE=$(ls -t data/url_queue/batch_*.csv | head -1)
           echo "batch_file=$BATCH_FILE" >> $GITHUB_ENV
-
-          BATCH_NAME=$(basename $BATCH_FILE)
-          echo "batch_name=$BATCH_NAME" >> $GITHUB_ENV
+          echo "batch_name=batch_${BATCH_DATE}.csv" >> $GITHUB_ENV
+          echo "batch_date=$BATCH_DATE" >> $GITHUB_ENV
 
           echo "✅ Collected URLs: $BATCH_FILE"
           wc -l $BATCH_FILE
@@ -94,17 +94,19 @@ jobs:
 
       - name: Upload batch to VM and extract DNS/WHOIS features
         run: |
-          BATCH_DATE=$(echo ${{ env.batch_name }} | sed 's/batch_//' | sed 's/.csv//')
+          BATCH_DATE="${{ env.batch_date }}"
+          BATCH_FILE="${{ env.batch_file }}"
+          BATCH_NAME="${{ env.batch_name }}"
 
-          echo "Uploading ${{ env.batch_file }} to VM..."
-          gcloud compute scp ${{ env.batch_file }} \
-            ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/url_queue/${{ env.batch_name }} \
+          echo "Uploading $BATCH_FILE to VM..."
+          gcloud compute scp $BATCH_FILE \
+            ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/url_queue/$BATCH_NAME \
             --zone=${{ env.GCP_ZONE }}
 
           echo "Running feature extraction on VM..."
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="cd /home/eeshanbhanap/phishnet && python3 scripts/extract_vm_features.py vm_data/url_queue/${{ env.batch_name }} $BATCH_DATE"
+            --command="cd /home/eeshanbhanap/phishnet && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE"
 
           # This creates:
           # - vm_data/incremental/dns_YYYYMMDD.csv
@@ -137,7 +139,7 @@ jobs:
       # ========================================================================
       - name: Merge features
         run: |
-          BATCH_DATE=$(echo ${{ env.batch_name }} | sed 's/batch_//' | sed 's/.csv//')
+          BATCH_DATE="${{ env.batch_date }}"
 
           echo "Merging URL + DNS + WHOIS features..."
           python3 scripts/merge_features.py \
