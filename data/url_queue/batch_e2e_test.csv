@@ -1,0 +1,11 @@
+url,label,source
+https://google.com,legitimate,known_good
+http://78.132.30.66/sshd,phishing,urlhaus
+https://www.google.com,legitimate,known_good
+https://yutreswv-hgfdssdbhtg-76vvrvdx.web.app/,phishing,phishtank
+https://google.com/about,legitimate,known_good
+https://www.bing.com/ck/a?!&amp;&amp;p=9f27e678988810ed510f9fa2aee745aeabd4f0898dc0c2c7926f171b569ddc5eJmltdHM9MTc1MDk4MjQwMA&amp;ptn=3&amp;ver=2&amp;hsh=4&amp;fclid=090ea7ef-bfa7-66cf-02d5-b1f7befd6777&amp;u=a1aHR0cHM6Ly91bml0ZWQtYW1pZ29zLmNhL21lbWJlcnMv&amp;ntb=F&amp;XOSF90BUAXNVB=MVKI77LFFQBUV,phishing,phishtank
+https://google.com/contact,legitimate,known_good
+https://a85k99xb.mistysh1eld.ru/?apikey=VJUjWYklMnyNzcZn&activityId=779d1629-59f1-4b0f-bdb2-fc30c2db9b28&ocid,phishing,urlhaus
+http://213.209.143.34/bins/arm,phishing,urlhaus
+https://google.com/products,legitimate,known_good

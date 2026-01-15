@@ -106,10 +106,13 @@ jobs:
           echo "Uploading $BATCH_FILE to GCS..."
           gcloud storage cp $BATCH_FILE gs://phishnet-pipeline-data/queue/$BATCH_NAME
 
+          echo "Uploading script to GCS..."
+          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
+
           echo "Processing on VM..."
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="cd /tmp && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME . && python3 /home/eeshanbhanap/phishnet/scripts/extract_vm_features.py $BATCH_NAME $BATCH_DATE && gcloud storage cp dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/"
+            --command="cd /tmp && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME . && gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py . && python3 extract_vm_features.py $BATCH_NAME $BATCH_DATE && gcloud storage cp dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/"
 
           echo "Downloading results from GCS..."
           mkdir -p vm_data/incremental
