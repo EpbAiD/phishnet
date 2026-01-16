@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       num_urls:
-        description: 'Number of URLs (20 for test, 1000 for production)'
+        description: 'Number of URLs to collect'
         required: false
-        default: '20'
+        default: '1000'
 
 env:
   GCP_PROJECT_ID: coms-452404
@@ -47,7 +47,7 @@ jobs:
       # ========================================================================
       - name: Collect URLs
         run: |
-          NUM_URLS="${{ github.event.inputs.num_urls || '20' }}"
+          NUM_URLS="${{ github.event.inputs.num_urls || '1000' }}"
           BATCH_DATE=$(date +%Y%m%d)
           BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
 
@@ -197,13 +197,12 @@ jobs:
             exit 0
           fi
 
-          NUM_URLS="${{ github.event.inputs.num_urls || '20' }}"
+          NUM_URLS="${{ github.event.inputs.num_urls || '1000' }}"
           git commit -m "Daily pipeline: train models with $NUM_URLS URLs
 
           - Collected $NUM_URLS URLs from sources
           - Extracted URL + DNS + WHOIS features
-          - Trained all models (URL, DNS, WHOIS)
-
+          - Trained all models (URL, DNS, WHOIS)"
 
           git push
 
