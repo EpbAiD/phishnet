@@ -163,12 +163,12 @@ jobs:
       - name: Prepare model-ready datasets
         run: |
           echo "Preparing model-ready datasets..."
-          python3 scripts/prepare_modelready.py data/processed/phishing_features_complete.csv
 
-          # This creates:
-          # - data/processed/url_features_modelready.csv
-          # - data/processed/dns_features_modelready.csv
-          # - data/processed/whois_features_modelready.csv
+          # For simplicity, just copy the complete file to modelready files
+          # Each training script will select its own features
+          cp data/processed/phishing_features_complete.csv data/processed/url_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/whois_features_modelready.csv
 
           echo "✅ Model-ready data prepared"
           wc -l data/processed/url_features_modelready.csv
