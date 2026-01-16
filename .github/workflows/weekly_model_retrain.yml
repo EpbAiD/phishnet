@@ -193,8 +193,6 @@ jobs:
           - Models saved to models/ directory
           - Automated via GitHub Actions (temporary daily schedule for VM verification)
 
-          🤖 Generated with Claude Code
-          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
           git push
 
