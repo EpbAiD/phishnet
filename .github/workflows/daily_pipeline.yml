@@ -103,13 +103,14 @@ jobs:
           BATCH_FILE="${{ env.batch_file }}"
           BATCH_NAME="${{ env.batch_name }}"
 
-          echo "Uploading $BATCH_FILE to GCS..."
+          echo "Uploading batch and script to GCS..."
           gcloud storage cp $BATCH_FILE gs://phishnet-pipeline-data/queue/$BATCH_NAME
+          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
 
-          echo "Processing on VM (in phishnet directory)..."
+          echo "Processing on VM..."
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo -u eeshanbhanap bash -c 'cd /home/eeshanbhanap/phishnet && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME vm_data/url_queue/ && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE && gcloud storage cp vm_data/incremental/dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp vm_data/incremental/whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/'"
+            --command="sudo -u eeshanbhanap bash -c 'cd /home/eeshanbhanap/phishnet && gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME vm_data/url_queue/ && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE && gcloud storage cp vm_data/incremental/dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp vm_data/incremental/whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/'"
 
           echo "Downloading results from GCS..."
           mkdir -p vm_data/incremental
@@ -203,7 +204,6 @@ jobs:
           - Extracted URL + DNS + WHOIS features
           - Trained all models (URL, DNS, WHOIS)
 
-          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
           git push
 
