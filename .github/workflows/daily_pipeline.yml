@@ -1,9 +1,9 @@
 name: Daily Pipeline (End-to-End)
 
 on:
-  schedule:
-    # Run daily at 9 AM EST (14:00 UTC)
-    - cron: '0 14 * * *'
+  # schedule:
+  #   # DISABLED - Testing phase, will enable after rigorous testing
+  #   - cron: '0 14 * * *'
   workflow_dispatch:
     inputs:
       num_urls:
@@ -51,17 +51,22 @@ jobs:
           BATCH_DATE=$(date +%Y%m%d)
           BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
 
-          mkdir -p data/url_queue
+          mkdir -p data/url_queue logs
 
-          echo "Collecting $NUM_URLS URLs..."
-          python3 scripts/fetch_urls.py $BATCH_FILE $NUM_URLS
+          echo "========================================" | tee logs/step1_collect.log
+          echo "STEP 1: Collecting $NUM_URLS URLs" | tee -a logs/step1_collect.log
+          echo "========================================" | tee -a logs/step1_collect.log
+
+          python3 scripts/fetch_urls.py $BATCH_FILE $NUM_URLS 2>&1 | tee -a logs/step1_collect.log
 
           echo "batch_file=$BATCH_FILE" >> $GITHUB_ENV
           echo "batch_name=batch_${BATCH_DATE}.csv" >> $GITHUB_ENV
           echo "batch_date=$BATCH_DATE" >> $GITHUB_ENV
 
-          echo "✅ Collected URLs: $BATCH_FILE"
-          wc -l $BATCH_FILE
+          COLLECTED=$(wc -l < $BATCH_FILE)
+          echo "✅ Collected: $COLLECTED URLs" | tee -a logs/step1_collect.log
+          echo "File: $BATCH_FILE" | tee -a logs/step1_collect.log
+          head -5 $BATCH_FILE | tee -a logs/step1_collect.log
 
       # ========================================================================
       # STEP 2: Extract URL Features (local)
@@ -70,13 +75,17 @@ jobs:
         run: |
           mkdir -p data/processed
 
-          echo "Extracting URL features from ${{ env.batch_file }}..."
+          echo "========================================" | tee logs/step2_url_features.log
+          echo "STEP 2: Extracting URL Features" | tee -a logs/step2_url_features.log
+          echo "========================================" | tee -a logs/step2_url_features.log
+
           python3 scripts/extract_url_features.py \
             ${{ env.batch_file }} \
-            data/processed/phishing_features_complete_url.csv
+            data/processed/phishing_features_complete_url.csv 2>&1 | tee -a logs/step2_url_features.log
 
-          echo "✅ URL features extracted"
-          wc -l data/processed/phishing_features_complete_url.csv
+          ROWS=$(wc -l < data/processed/phishing_features_complete_url.csv)
+          echo "✅ URL features: $ROWS rows" | tee -a logs/step2_url_features.log
+          head -3 data/processed/phishing_features_complete_url.csv | tee -a logs/step2_url_features.log
 
       # ========================================================================
       # STEP 3: Start VM & Extract DNS/WHOIS Features
@@ -103,23 +112,28 @@ jobs:
           BATCH_FILE="${{ env.batch_file }}"
           BATCH_NAME="${{ env.batch_name }}"
 
-          echo "Uploading batch and script to GCS..."
-          gcloud storage cp $BATCH_FILE gs://phishnet-pipeline-data/queue/$BATCH_NAME
-          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
+          echo "========================================" | tee logs/step3_vm_features.log
+          echo "STEP 3: Extracting DNS/WHOIS Features on VM" | tee -a logs/step3_vm_features.log
+          echo "========================================" | tee -a logs/step3_vm_features.log
 
-          echo "Processing on VM..."
+          echo "Uploading to GCS..." | tee -a logs/step3_vm_features.log
+          gcloud storage cp $BATCH_FILE gs://phishnet-pipeline-data/queue/$BATCH_NAME 2>&1 | tee -a logs/step3_vm_features.log
+          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/ 2>&1 | tee -a logs/step3_vm_features.log
+
+          echo "Processing on VM..." | tee -a logs/step3_vm_features.log
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo -u eeshanbhanap bash -c 'cd /home/eeshanbhanap/phishnet && gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME vm_data/url_queue/ && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE && gcloud storage cp vm_data/incremental/dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp vm_data/incremental/whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/'"
+            --command="sudo -u eeshanbhanap bash -c 'cd /home/eeshanbhanap/phishnet && gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME vm_data/url_queue/ && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE && gcloud storage cp vm_data/incremental/dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp vm_data/incremental/whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/'" 2>&1 | tee -a logs/step3_vm_features.log
 
-          echo "Downloading results from GCS..."
+          echo "Downloading results..." | tee -a logs/step3_vm_features.log
           mkdir -p vm_data/incremental
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/dns_${BATCH_DATE}.csv vm_data/incremental/
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/whois_${BATCH_DATE}.csv vm_data/incremental/
+          gcloud storage cp gs://phishnet-pipeline-data/incremental/dns_${BATCH_DATE}.csv vm_data/incremental/ 2>&1 | tee -a logs/step3_vm_features.log
+          gcloud storage cp gs://phishnet-pipeline-data/incremental/whois_${BATCH_DATE}.csv vm_data/incremental/ 2>&1 | tee -a logs/step3_vm_features.log
 
-          echo "✅ DNS/WHOIS features extracted"
-          wc -l vm_data/incremental/dns_${BATCH_DATE}.csv
-          wc -l vm_data/incremental/whois_${BATCH_DATE}.csv
+          DNS_ROWS=$(wc -l < vm_data/incremental/dns_${BATCH_DATE}.csv)
+          WHOIS_ROWS=$(wc -l < vm_data/incremental/whois_${BATCH_DATE}.csv)
+          echo "✅ DNS features: $DNS_ROWS rows" | tee -a logs/step3_vm_features.log
+          echo "✅ WHOIS features: $WHOIS_ROWS rows" | tee -a logs/step3_vm_features.log
 
       - name: Stop VM
         if: always()
@@ -209,16 +223,48 @@ jobs:
           echo "✅ Models committed to GitHub"
 
       # ========================================================================
-      # STEP 8: Deploy to Cloud Run (if needed)
+      # STEP 8: Upload test results
       # ========================================================================
-      - name: Deploy API
-        run: |
-          echo "Deploying API to Cloud Run..."
-          gcloud run deploy phishnet-api \
-            --source . \
-            --region us-central1 \
-            --platform managed \
-            --allow-unauthenticated \
-            --set-env-vars="GCP_PROJECT_ID=${{ env.GCP_PROJECT_ID }}" || echo "Deployment skipped"
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-test-results-${{ github.run_number }}
+          path: |
+            logs/
+            data/url_queue/batch_*.csv
+            data/processed/phishing_features_complete*.csv
+            vm_data/incremental/
+            models/production_metadata.json
+          retention-days: 30
 
-          echo "✅ Pipeline complete!"
+      # ========================================================================
+      # STEP 9: Create summary
+      # ========================================================================
+      - name: Create test summary
+        if: always()
+        run: |
+          echo "========================================" | tee logs/summary.log
+          echo "PIPELINE TEST SUMMARY" | tee -a logs/summary.log
+          echo "========================================" | tee -a logs/summary.log
+          echo "Run: ${{ github.run_number }}" | tee -a logs/summary.log
+          echo "URLs requested: ${{ github.event.inputs.num_urls }}" | tee -a logs/summary.log
+          echo "" | tee -a logs/summary.log
+
+          if [ -f "logs/step1_collect.log" ]; then
+            echo "Step 1: URL Collection" | tee -a logs/summary.log
+            grep "Collected:" logs/step1_collect.log | tee -a logs/summary.log
+          fi
+
+          if [ -f "logs/step2_url_features.log" ]; then
+            echo "Step 2: URL Features" | tee -a logs/summary.log
+            grep "URL features:" logs/step2_url_features.log | tee -a logs/summary.log
+          fi
+
+          if [ -f "logs/step3_vm_features.log" ]; then
+            echo "Step 3: VM Features" | tee -a logs/summary.log
+            grep "features:" logs/step3_vm_features.log | tee -a logs/summary.log
+          fi
+
+          echo "" | tee -a logs/summary.log
+          cat logs/summary.log
