@@ -181,19 +181,19 @@ jobs:
       - name: Train URL model
         run: |
           echo "Training URL model..."
-          python3 scripts/train_url_model.py data/processed/url_features_modelready.csv
+          python3 scripts/train_url_model.py
           echo "✅ URL model trained"
 
       - name: Train DNS model
         run: |
           echo "Training DNS model..."
-          python3 scripts/train_dns_model.py data/processed/dns_features_modelready.csv
+          python3 scripts/train_dns_model.py
           echo "✅ DNS model trained"
 
       - name: Train WHOIS model
         run: |
           echo "Training WHOIS model..."
-          python3 scripts/train_whois_model.py data/processed/whois_features_modelready.csv
+          python3 scripts/train_whois_model.py
           echo "✅ WHOIS model trained"
 
       # ========================================================================
