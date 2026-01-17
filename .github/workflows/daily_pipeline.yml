@@ -21,6 +21,8 @@ jobs:
     name: Complete Pipeline
     runs-on: ubuntu-latest
     timeout-minutes: 600  # 10 hours max
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
