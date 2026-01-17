@@ -164,16 +164,39 @@ jobs:
         run: |
           echo "Preparing model-ready datasets..."
 
-          # Encode labels: phishing->1, legitimate->0
+          # Encode labels and create imputed version
           python3 -c "
           import pandas as pd
+          import numpy as np
+
+          # Load data
           df = pd.read_csv('data/processed/phishing_features_complete.csv')
+
+          # Encode labels: phishing->1, legitimate->0
           if 'label' in df.columns:
               df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
+
+          # Save native version
           df.to_csv('data/processed/phishing_features_complete.csv', index=False)
           print(f'✅ Encoded labels: {len(df)} rows')
           print(f'   Phishing (1): {(df[\"label\"] == 1).sum()}')
           print(f'   Legitimate (0): {(df[\"label\"] == 0).sum()}')
+
+          # Create imputed version (mean imputation for numeric columns)
+          df_imputed = df.copy()
+          non_feature_cols = ['url', 'label', 'source', 'bucket']
+          feature_cols = [col for col in df_imputed.columns if col not in non_feature_cols]
+
+          for col in feature_cols:
+              if df_imputed[col].dtype in ['float64', 'int64']:
+                  df_imputed[col].fillna(df_imputed[col].mean(), inplace=True)
+
+          # Fill any remaining NaNs with 0
+          df_imputed.fillna(0, inplace=True)
+
+          # Save imputed version
+          df_imputed.to_csv('data/processed/phishing_features_complete_imputed.csv', index=False)
+          print(f'✅ Created imputed dataset (no NaN values)')
           "
 
           # Copy to modelready files
@@ -181,10 +204,10 @@ jobs:
           cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready.csv
           cp data/processed/phishing_features_complete.csv data/processed/whois_features_modelready.csv
 
-          # Create imputed versions (just copy for now - training scripts handle imputation)
-          cp data/processed/phishing_features_complete.csv data/processed/url_features_modelready_imputed.csv
-          cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready_imputed.csv
-          cp data/processed/phishing_features_complete.csv data/processed/whois_features_modelready_imputed.csv
+          # Copy imputed versions
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/url_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/dns_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/whois_features_modelready_imputed.csv
 
           echo "✅ Model-ready data prepared"
           wc -l data/processed/url_features_modelready.csv
