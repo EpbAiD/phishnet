@@ -164,6 +164,18 @@ jobs:
         run: |
           echo "Preparing model-ready datasets..."
 
+          # Encode labels: phishing->1, legitimate->0
+          python3 -c "
+          import pandas as pd
+          df = pd.read_csv('data/processed/phishing_features_complete.csv')
+          if 'label' in df.columns:
+              df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
+          df.to_csv('data/processed/phishing_features_complete.csv', index=False)
+          print(f'✅ Encoded labels: {len(df)} rows')
+          print(f'   Phishing (1): {(df[\"label\"] == 1).sum()}')
+          print(f'   Legitimate (0): {(df[\"label\"] == 0).sum()}')
+          "
+
           # Copy to modelready files
           cp data/processed/phishing_features_complete.csv data/processed/url_features_modelready.csv
           cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready.csv
