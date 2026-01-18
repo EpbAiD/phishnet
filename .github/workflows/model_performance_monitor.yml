@@ -26,14 +26,14 @@ jobs:
 
       - name: Load test dataset
         run: |
-          # Use the latest modelready dataset as test set
-          if [ -f "data/processed/url_features_modelready.csv" ]; then
-            echo "✅ Using latest modelready dataset for evaluation"
-            cp data/processed/url_features_modelready.csv data/test_set.csv
-          elif [ ! -f "data/test_set.csv" ]; then
-            echo "⚠️ No modelready dataset or test set found, creating one..."
-            python3 scripts/collect_test_set.py
-          fi
+          # Create directories if they don't exist
+          mkdir -p data/processed
+
+          # Generate fresh test set
+          echo "📊 Generating fresh test set for model evaluation..."
+          python3 scripts/collect_test_set.py
+
+          echo "✅ Test set ready at data/test_set.csv"
 
       - name: Evaluate models on test set
         id: evaluate
