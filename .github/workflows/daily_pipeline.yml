@@ -1,8 +1,11 @@
-name: Daily Pipeline (End-to-End)
+name: Daily Pipeline (End-to-End) - TEST ONLY
+
+# This workflow was for testing end-to-end flow
+# Production uses: daily_data_pipeline.yml (daily) + weekly_model_retrain.yml (weekly)
 
 on:
+  # DISABLED - Use separate daily collection + weekly training workflows
   # schedule:
-  #   # DISABLED - Testing phase, will enable after rigorous testing
   #   - cron: '0 14 * * *'
   workflow_dispatch:
     inputs:

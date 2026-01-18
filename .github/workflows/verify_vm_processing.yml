@@ -1,0 +1,120 @@
+name: Verify VM Processing Complete
+
+on:
+  schedule:
+    # Run at 3 PM EST (20:00 UTC) - 6 hours after collection
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to verify (YYYYMMDD)'
+        required: false
+
+env:
+  GCP_PROJECT_ID: coms-452404
+  GCS_BUCKET: gs://phishnet-pipeline-data
+
+jobs:
+  verify-processing:
+    name: Verify Data Processing Complete
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify processing complete
+        run: |
+          # Use provided date or today's date
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE="${{ github.event.inputs.date }}"
+          else
+            DATE=$(date +%Y%m%d)
+          fi
+
+          echo "Verifying processing for date: $DATE"
+
+          # Check if incremental files exist in GCS
+          echo "Checking for DNS features..."
+          if gcloud storage ls ${{ env.GCS_BUCKET }}/incremental/dns_${DATE}.csv; then
+            echo "✅ DNS features found"
+            DNS_FOUND=true
+          else
+            echo "❌ DNS features NOT found"
+            DNS_FOUND=false
+          fi
+
+          echo "Checking for WHOIS features..."
+          if gcloud storage ls ${{ env.GCS_BUCKET }}/incremental/whois_${DATE}.csv; then
+            echo "✅ WHOIS features found"
+            WHOIS_FOUND=true
+          else
+            echo "❌ WHOIS features NOT found"
+            WHOIS_FOUND=false
+          fi
+
+          # Download last URL for verification
+          echo "Checking if last URL is in main dataset..."
+          if gcloud storage ls ${{ env.GCS_BUCKET }}/verification/last_url_${DATE}.txt; then
+            gcloud storage cp ${{ env.GCS_BUCKET }}/verification/last_url_${DATE}.txt .
+            LAST_URL=$(cat last_url_${DATE}.txt)
+            echo "Last URL collected: $LAST_URL"
+
+            # Download and check main dataset
+            if gcloud storage ls ${{ env.GCS_BUCKET }}/main/phishing_features_complete.csv; then
+              gcloud storage cp ${{ env.GCS_BUCKET }}/main/phishing_features_complete.csv .
+
+              if grep -q "$LAST_URL" phishing_features_complete.csv; then
+                echo "✅ Last URL found in main dataset - Processing COMPLETE"
+                MAIN_UPDATED=true
+              else
+                echo "⚠️ Last URL NOT in main dataset - Processing may still be running"
+                MAIN_UPDATED=false
+              fi
+            else
+              echo "ℹ️ Main dataset not found - First run or VM still processing"
+              MAIN_UPDATED=false
+            fi
+          else
+            echo "⚠️ Verification file not found"
+            MAIN_UPDATED=false
+          fi
+
+          # Summary
+          echo ""
+          echo "=========================================="
+          echo "PROCESSING STATUS FOR $DATE"
+          echo "=========================================="
+          echo "DNS features:     $DNS_FOUND"
+          echo "WHOIS features:   $WHOIS_FOUND"
+          echo "Main DB updated:  $MAIN_UPDATED"
+          echo "=========================================="
+
+          if [ "$DNS_FOUND" = true ] && [ "$WHOIS_FOUND" = true ] && [ "$MAIN_UPDATED" = true ]; then
+            echo "✅ Processing COMPLETE - Ready for weekly model training"
+            exit 0
+          elif [ "$DNS_FOUND" = true ] && [ "$WHOIS_FOUND" = true ]; then
+            echo "⏳ Features extracted but main DB not updated yet"
+            exit 0
+          else
+            echo "⏳ Processing still in progress or failed"
+            echo "💡 VM may still be processing. Check again later."
+            exit 0
+          fi
