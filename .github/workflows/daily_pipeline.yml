@@ -118,19 +118,29 @@ jobs:
           echo "STEP 3: Extracting DNS/WHOIS Features on VM" | tee -a logs/step3_vm_features.log
           echo "========================================" | tee -a logs/step3_vm_features.log
 
-          echo "Uploading to GCS..." | tee -a logs/step3_vm_features.log
-          gcloud storage cp $BATCH_FILE gs://phishnet-pipeline-data/queue/$BATCH_NAME 2>&1 | tee -a logs/step3_vm_features.log
-          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/ 2>&1 | tee -a logs/step3_vm_features.log
+          # Upload batch file to VM
+          echo "Uploading batch file to VM..." | tee -a logs/step3_vm_features.log
+          gcloud compute scp $BATCH_FILE ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/url_queue/$BATCH_NAME \
+            --zone=${{ env.GCP_ZONE }} 2>&1 | tee -a logs/step3_vm_features.log
 
-          echo "Processing on VM..." | tee -a logs/step3_vm_features.log
+          # Upload extraction script to VM
+          echo "Uploading extraction script to VM..." | tee -a logs/step3_vm_features.log
+          gcloud compute scp scripts/extract_vm_features.py ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/scripts/ \
+            --zone=${{ env.GCP_ZONE }} 2>&1 | tee -a logs/step3_vm_features.log
+
+          # Run extraction on VM (this will take a while)
+          echo "Running DNS/WHOIS extraction on VM..." | tee -a logs/step3_vm_features.log
           gcloud compute ssh ${{ env.VM_NAME }} \
             --zone=${{ env.GCP_ZONE }} \
-            --command="sudo -u eeshanbhanap bash -c 'cd /home/eeshanbhanap/phishnet && gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && gcloud storage cp gs://phishnet-pipeline-data/queue/$BATCH_NAME vm_data/url_queue/ && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE && gcloud storage cp vm_data/incremental/dns_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/ && gcloud storage cp vm_data/incremental/whois_${BATCH_DATE}.csv gs://phishnet-pipeline-data/incremental/'" 2>&1 | tee -a logs/step3_vm_features.log
+            --command="cd /home/eeshanbhanap/phishnet && python3 scripts/extract_vm_features.py vm_data/url_queue/$BATCH_NAME $BATCH_DATE" 2>&1 | tee -a logs/step3_vm_features.log
 
-          echo "Downloading results..." | tee -a logs/step3_vm_features.log
+          # Download results from VM
+          echo "Downloading results from VM..." | tee -a logs/step3_vm_features.log
           mkdir -p vm_data/incremental
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/dns_${BATCH_DATE}.csv vm_data/incremental/ 2>&1 | tee -a logs/step3_vm_features.log
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/whois_${BATCH_DATE}.csv vm_data/incremental/ 2>&1 | tee -a logs/step3_vm_features.log
+          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/dns_${BATCH_DATE}.csv vm_data/incremental/ \
+            --zone=${{ env.GCP_ZONE }} 2>&1 | tee -a logs/step3_vm_features.log
+          gcloud compute scp ${{ env.VM_NAME }}:/home/eeshanbhanap/phishnet/vm_data/incremental/whois_${BATCH_DATE}.csv vm_data/incremental/ \
+            --zone=${{ env.GCP_ZONE }} 2>&1 | tee -a logs/step3_vm_features.log
 
           DNS_ROWS=$(wc -l < vm_data/incremental/dns_${BATCH_DATE}.csv)
           WHOIS_ROWS=$(wc -l < vm_data/incremental/whois_${BATCH_DATE}.csv)
