@@ -1,15 +1,16 @@
-name: VM Processing Monitor & Data Validation
+name: VM Processing Monitor & Data Validation (OBSOLETE)
+
+# OBSOLETE: This workflow is no longer used. The unified daily_pipeline.yml handles all processing.
+# Keeping for historical reference only.
 
 on:
   workflow_dispatch:
+    # DISABLED - Obsolete workflow, replaced by daily_pipeline.yml
     inputs:
-      timestamp:
-        description: 'Processing timestamp (YYYYMMDD)'
-        required: true
-      max_wait_hours:
-        description: 'Maximum hours to wait for processing'
+      disabled:
+        description: 'This workflow is obsolete and disabled'
         required: false
-        default: '8'
+        default: 'true'
 
 env:
   GCP_PROJECT_ID: coms-452404

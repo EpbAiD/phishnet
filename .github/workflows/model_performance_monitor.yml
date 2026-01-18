@@ -1,9 +1,9 @@
 name: Model Performance Monitoring
 
 on:
-  # Run weekly on Sundays at 12 PM UTC (optimized for cost)
-  schedule:
-    - cron: '0 12 * * 0'
+  # schedule:
+  #   # DISABLED - Need to update to work with new pipeline
+  #   - cron: '0 12 * * 0'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
@@ -26,9 +26,12 @@ jobs:
 
       - name: Load test dataset
         run: |
-          # Check if test set exists
-          if [ ! -f "data/test_set.csv" ]; then
-            echo "⚠️ Test set not found, creating one..."
+          # Use the latest modelready dataset as test set
+          if [ -f "data/processed/url_features_modelready.csv" ]; then
+            echo "✅ Using latest modelready dataset for evaluation"
+            cp data/processed/url_features_modelready.csv data/test_set.csv
+          elif [ ! -f "data/test_set.csv" ]; then
+            echo "⚠️ No modelready dataset or test set found, creating one..."
             python3 scripts/collect_test_set.py
           fi
 
