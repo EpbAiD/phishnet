@@ -1,9 +1,9 @@
 name: Daily Data Collection & Processing
 
 on:
-  # schedule:
-  #   # DISABLED - Replaced by unified daily_pipeline.yml
-  #   - cron: '0 14 * * *'
+  schedule:
+    # Run daily at 9 AM EST (14:00 UTC)
+    - cron: '0 14 * * *'
   workflow_dispatch:  # Allow manual trigger
     inputs:
       num_urls:
@@ -108,20 +108,20 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
           echo "Collection timestamp: $TIMESTAMP"
 
-      - name: Trigger VM processing monitor workflow
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'vm_processing_monitor.yml',
-              ref: 'main',
-              inputs: {
-                timestamp: '${{ steps.timestamp.outputs.timestamp }}'
-              }
-            });
+      - name: Save last URL for verification
+        run: |
+          TIMESTAMP=$(date +%Y%m%d)
+          # Get the last URL from today's batch
+          LAST_URL=$(tail -1 data/url_queue/batch_${TIMESTAMP}.csv | cut -d',' -f1)
+          echo "Last URL collected: $LAST_URL"
+          echo "$LAST_URL" > last_url_${TIMESTAMP}.txt
+
+          # Upload to GCS for later verification
+          gcloud storage cp last_url_${TIMESTAMP}.txt ${{ env.GCS_BUCKET }}/verification/
+
+          echo "✅ VM will process batch in background"
+          echo "⏰ Check after 6 hours if processing is complete"
+          echo "📍 Verification: Check if $LAST_URL is in main dataset"
 
   notify-collection-complete:
     name: Notify Collection Status
