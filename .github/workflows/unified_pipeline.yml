@@ -1,0 +1,368 @@
+name: Unified ML Pipeline
+
+# Single configurable pipeline - reads .github/pipeline_config.yml
+# Change frequencies in config file instead of editing workflow
+
+on:
+  schedule:
+    # Daily schedule (controlled by config)
+    - cron: '0 14 * * *'     # 9 AM EST daily
+    # Weekly schedule (controlled by config)
+    - cron: '0 14 * * 0'     # Sunday 9 AM EST
+
+  workflow_dispatch:
+    inputs:
+      override_stage:
+        description: 'Force run specific stage (data/features/training/deploy/all)'
+        required: false
+        default: 'all'
+      num_urls:
+        description: 'Override num_urls from config'
+        required: false
+
+env:
+  GCP_PROJECT_ID: coms-452404
+  GCP_ZONE: us-central1-c
+  VM_NAME: dns-whois-fetch-25
+  CONFIG_FILE: .github/pipeline_config.yml
+
+jobs:
+  # ========================================================================
+  # JOB 1: Load Configuration
+  # ========================================================================
+  load-config:
+    name: Load Pipeline Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      data_collection_freq: ${{ steps.parse.outputs.data_collection_freq }}
+      feature_extraction_freq: ${{ steps.parse.outputs.feature_extraction_freq }}
+      model_training_freq: ${{ steps.parse.outputs.model_training_freq }}
+      deployment_freq: ${{ steps.parse.outputs.deployment_freq }}
+      num_urls: ${{ steps.parse.outputs.num_urls }}
+      mode: ${{ steps.parse.outputs.mode }}
+      should_run_data: ${{ steps.decide.outputs.should_run_data }}
+      should_run_training: ${{ steps.decide.outputs.should_run_training }}
+      should_run_deployment: ${{ steps.decide.outputs.should_run_deployment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse configuration
+        id: parse
+        run: |
+          # Read config file
+          DATA_FREQ=$(grep -A 2 "data_collection:" $CONFIG_FILE | grep "frequency:" | awk '{print $2}' | tr -d '"')
+          FEATURE_FREQ=$(grep -A 2 "feature_extraction:" $CONFIG_FILE | grep "frequency:" | awk '{print $2}' | tr -d '"')
+          TRAINING_FREQ=$(grep -A 2 "model_training:" $CONFIG_FILE | grep "frequency:" | awk '{print $2}' | tr -d '"')
+          DEPLOY_FREQ=$(grep -A 2 "deployment:" $CONFIG_FILE | grep "frequency:" | awk '{print $2}' | tr -d '"')
+          NUM_URLS=$(grep "num_urls:" $CONFIG_FILE | head -1 | awk '{print $2}')
+          MODE=$(grep "mode:" $CONFIG_FILE | awk '{print $2}' | tr -d '"')
+
+          echo "data_collection_freq=$DATA_FREQ" >> $GITHUB_OUTPUT
+          echo "feature_extraction_freq=$FEATURE_FREQ" >> $GITHUB_OUTPUT
+          echo "model_training_freq=$TRAINING_FREQ" >> $GITHUB_OUTPUT
+          echo "deployment_freq=$DEPLOY_FREQ" >> $GITHUB_OUTPUT
+          echo "num_urls=${NUM_URLS}" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+
+          echo "📋 Configuration loaded:"
+          echo "  Mode: $MODE"
+          echo "  Data collection: $DATA_FREQ"
+          echo "  Feature extraction: $FEATURE_FREQ"
+          echo "  Model training: $TRAINING_FREQ"
+          echo "  Deployment: $DEPLOY_FREQ"
+          echo "  URLs per run: $NUM_URLS"
+
+      - name: Decide what to run
+        id: decide
+        run: |
+          # Determine if today is Sunday (for weekly runs)
+          IS_SUNDAY=$(date +%u)  # 7 = Sunday
+
+          # Override from manual trigger
+          OVERRIDE="${{ github.event.inputs.override_stage }}"
+
+          # Data collection decision
+          DATA_FREQ="${{ steps.parse.outputs.data_collection_freq }}"
+          if [ "$OVERRIDE" = "all" ] || [ "$OVERRIDE" = "data" ]; then
+            SHOULD_RUN_DATA=true
+          elif [ "$DATA_FREQ" = "daily" ]; then
+            SHOULD_RUN_DATA=true
+          elif [ "$DATA_FREQ" = "weekly" ] && [ "$IS_SUNDAY" = "7" ]; then
+            SHOULD_RUN_DATA=true
+          else
+            SHOULD_RUN_DATA=false
+          fi
+
+          # Training decision
+          TRAINING_FREQ="${{ steps.parse.outputs.model_training_freq }}"
+          if [ "$OVERRIDE" = "all" ] || [ "$OVERRIDE" = "training" ]; then
+            SHOULD_RUN_TRAINING=true
+          elif [ "$TRAINING_FREQ" = "daily" ]; then
+            SHOULD_RUN_TRAINING=true
+          elif [ "$TRAINING_FREQ" = "weekly" ] && [ "$IS_SUNDAY" = "7" ]; then
+            SHOULD_RUN_TRAINING=true
+          else
+            SHOULD_RUN_TRAINING=false
+          fi
+
+          # Deployment decision (usually same as training)
+          DEPLOY_FREQ="${{ steps.parse.outputs.deployment_freq }}"
+          if [ "$OVERRIDE" = "all" ] || [ "$OVERRIDE" = "deploy" ]; then
+            SHOULD_RUN_DEPLOYMENT=true
+          elif [ "$DEPLOY_FREQ" = "daily" ]; then
+            SHOULD_RUN_DEPLOYMENT=true
+          elif [ "$DEPLOY_FREQ" = "weekly" ] && [ "$IS_SUNDAY" = "7" ]; then
+            SHOULD_RUN_DEPLOYMENT=true
+          else
+            SHOULD_RUN_DEPLOYMENT=false
+          fi
+
+          echo "should_run_data=$SHOULD_RUN_DATA" >> $GITHUB_OUTPUT
+          echo "should_run_training=$SHOULD_RUN_TRAINING" >> $GITHUB_OUTPUT
+          echo "should_run_deployment=$SHOULD_RUN_DEPLOYMENT" >> $GITHUB_OUTPUT
+
+          echo "🎯 Run decisions:"
+          echo "  Data collection: $SHOULD_RUN_DATA"
+          echo "  Model training: $SHOULD_RUN_TRAINING"
+          echo "  Deployment: $SHOULD_RUN_DEPLOYMENT"
+
+  # ========================================================================
+  # JOB 2: Data Collection & Feature Extraction
+  # ========================================================================
+  data-and-features:
+    name: Collect Data & Extract Features
+    runs-on: ubuntu-latest
+    needs: load-config
+    if: needs.load-config.outputs.should_run_data == 'true'
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set batch info
+        id: batch
+        run: |
+          BATCH_DATE=$(date +%Y%m%d)
+          BATCH_NAME="batch_${BATCH_DATE}.csv"
+          BATCH_FILE="data/url_queue/${BATCH_NAME}"
+
+          echo "batch_date=$BATCH_DATE" >> $GITHUB_ENV
+          echo "batch_name=$BATCH_NAME" >> $GITHUB_ENV
+          echo "batch_file=$BATCH_FILE" >> $GITHUB_ENV
+
+      - name: Collect URLs
+        run: |
+          NUM_URLS="${{ github.event.inputs.num_urls || needs.load-config.outputs.num_urls }}"
+          echo "Collecting $NUM_URLS URLs..."
+          python3 scripts/fetch_urls.py ${{ env.batch_file }} $NUM_URLS
+
+      - name: Extract URL Features
+        run: |
+          echo "Extracting URL features..."
+          python3 scripts/extract_url_features.py ${{ env.batch_file }} data/processed/phishing_features_complete_url.csv
+
+      - name: Start VM
+        run: |
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} --format="get(status)")
+
+          if [ "$VM_STATUS" = "TERMINATED" ]; then
+            echo "Starting VM..."
+            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+            sleep 90
+          fi
+
+      - name: Extract DNS/WHOIS on VM
+        run: |
+          # Upload batch to GCS
+          gcloud storage cp ${{ env.batch_file }} gs://phishnet-pipeline-data/queue/${{ env.batch_name }}
+          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
+
+          # Process on VM
+          gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} \
+            --command="cd /home/eeshanbhanap/phishnet && \
+                       gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && \
+                       gcloud storage cp gs://phishnet-pipeline-data/queue/${{ env.batch_name }} vm_data/url_queue/ && \
+                       python3 scripts/extract_vm_features.py vm_data/url_queue/${{ env.batch_name }} ${{ env.batch_date }} && \
+                       gcloud storage cp vm_data/incremental/dns_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/ && \
+                       gcloud storage cp vm_data/incremental/whois_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/"
+
+          # Download results
+          mkdir -p vm_data/incremental
+          gcloud storage cp gs://phishnet-pipeline-data/incremental/dns_${{ env.batch_date }}.csv vm_data/incremental/
+          gcloud storage cp gs://phishnet-pipeline-data/incremental/whois_${{ env.batch_date }}.csv vm_data/incremental/
+
+      - name: Stop VM
+        if: always()
+        run: |
+          gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} || true
+
+      - name: Merge features
+        run: |
+          python3 scripts/merge_features.py \
+            data/processed/phishing_features_complete_url.csv \
+            vm_data/incremental/dns_${{ env.batch_date }}.csv \
+            vm_data/incremental/whois_${{ env.batch_date }}.csv \
+            data/processed/phishing_features_complete.csv
+
+      - name: Upload features as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: features-${{ env.batch_date }}
+          path: data/processed/phishing_features_complete.csv
+
+  # ========================================================================
+  # JOB 3: Model Training
+  # ========================================================================
+  train-models:
+    name: Train ML Models
+    runs-on: ubuntu-latest
+    needs: [load-config, data-and-features]
+    if: needs.load-config.outputs.should_run_training == 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download features
+        uses: actions/download-artifact@v4
+        with:
+          pattern: features-*
+          merge-multiple: true
+          path: data/processed/
+
+      - name: Prepare model-ready datasets
+        run: |
+          # Encode labels and create imputed version
+          python3 << 'EOF'
+          import pandas as pd
+          import numpy as np
+
+          df = pd.read_csv('data/processed/phishing_features_complete.csv')
+
+          # Encode labels
+          if 'label' in df.columns:
+              df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
+
+          df.to_csv('data/processed/phishing_features_complete.csv', index=False)
+
+          # Create imputed version
+          df_imputed = df.copy()
+          non_feature_cols = ['url', 'label', 'source', 'bucket']
+          feature_cols = [col for col in df_imputed.columns if col not in non_feature_cols]
+
+          for col in feature_cols:
+              if df_imputed[col].dtype in ['float64', 'int64']:
+                  df_imputed[col].fillna(df_imputed[col].mean(), inplace=True)
+          df_imputed.fillna(0, inplace=True)
+          df_imputed.to_csv('data/processed/phishing_features_complete_imputed.csv', index=False)
+
+          print(f"✅ Prepared {len(df)} rows for training")
+          EOF
+
+          # Copy to modelready files
+          cp data/processed/phishing_features_complete.csv data/processed/url_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/whois_features_modelready.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/url_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/dns_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/whois_features_modelready_imputed.csv
+
+      - name: Train URL model
+        run: python3 scripts/train_url_model.py
+
+      - name: Train DNS model
+        run: python3 scripts/train_dns_model.py
+
+      - name: Train WHOIS model
+        run: python3 scripts/train_whois_model.py
+
+      - name: Commit trained models
+        run: |
+          git config user.name "EpbAiD"
+          git config user.email "eeshanpbhanap@gmail.com"
+
+          git add models/
+
+          if git diff --staged --quiet; then
+            echo "No model changes to commit"
+            exit 0
+          fi
+
+          MODE="${{ needs.load-config.outputs.mode }}"
+          ROWS=$(wc -l < data/processed/phishing_features_complete.csv)
+
+          git commit -m "[$MODE] Train models on $ROWS URLs
+
+          - URL models: 15 algorithms
+          - DNS models: 15 algorithms
+          - WHOIS models: 15 algorithms
+          - Total: 45 models updated"
+
+          git push
+
+  # ========================================================================
+  # JOB 4: Update Validation Counter
+  # ========================================================================
+  update-validation:
+    name: Update Validation Progress
+    runs-on: ubuntu-latest
+    needs: [load-config, train-models]
+    if: needs.load-config.outputs.mode == 'validation'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Increment validation counter
+        run: |
+          COMPLETED=$(grep "runs_completed:" .github/pipeline_config.yml | awk '{print $2}')
+          NEW_COUNT=$((COMPLETED + 1))
+
+          sed -i "s/runs_completed: $COMPLETED/runs_completed: $NEW_COUNT/" .github/pipeline_config.yml
+
+          git config user.name "EpbAiD"
+          git config user.email "eeshanpbhanap@gmail.com"
+          git add .github/pipeline_config.yml
+          git commit -m "Validation progress: Run $NEW_COUNT of 10 complete"
+          git push
+
+          echo "✅ Validation run $NEW_COUNT of 10 complete"
+
+          if [ $NEW_COUNT -eq 10 ]; then
+            echo "🎉 ALL 10 VALIDATION RUNS COMPLETE!"
+            echo "💡 Change frequencies in .github/pipeline_config.yml to production mode"
+          fi
