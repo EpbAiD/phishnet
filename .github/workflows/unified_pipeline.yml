@@ -3,10 +3,6 @@ name: Unified ML Pipeline
 # Single configurable pipeline - reads .github/pipeline_config.yml
 # Change frequencies in config file instead of editing workflow
 
-# Force sequential execution - only one run at a time
-# Queue runs instead of cancelling them
-concurrency: unified-pipeline-queue
-
 on:
   schedule:
     # Daily schedule (controlled by config)
