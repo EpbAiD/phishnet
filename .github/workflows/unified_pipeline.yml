@@ -358,6 +358,9 @@ jobs:
           git config user.email "eeshanpbhanap@gmail.com"
           git add .github/pipeline_config.yml
           git commit -m "Validation progress: Run $NEW_COUNT of 10 complete"
+
+          # Pull first to avoid conflicts with model training job
+          git pull --rebase origin main
           git push
 
           echo "✅ Validation run $NEW_COUNT of 10 complete"
