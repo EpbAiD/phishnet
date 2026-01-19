@@ -37,7 +37,7 @@ stages:
 # Validation Settings
 validation:
   runs_needed: 10            # Number of runs to validate system
-  runs_completed: 1          # Track progress (auto-updated by workflow)
+  runs_completed: 2          # Track progress (auto-updated by workflow)
 
 # Schedule Settings (auto-generated from frequencies above)
 schedules:
