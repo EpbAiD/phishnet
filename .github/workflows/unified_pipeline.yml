@@ -4,9 +4,8 @@ name: Unified ML Pipeline
 # Change frequencies in config file instead of editing workflow
 
 # Force sequential execution - only one run at a time
-concurrency:
-  group: unified-pipeline
-  cancel-in-progress: false
+# Queue runs instead of cancelling them
+concurrency: unified-pipeline-queue
 
 on:
   schedule:
