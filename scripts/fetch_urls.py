@@ -32,6 +32,19 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     print(f"  Target: {target_count} URLs")
     print()
 
+    # Load existing URLs to avoid duplicates across runs
+    existing_urls = set()
+    master_file = "data/processed/phishing_features_complete.csv"
+    if os.path.exists(master_file):
+        try:
+            df_existing = pd.read_csv(master_file)
+            if 'url' in df_existing.columns:
+                existing_urls = set(df_existing['url'].tolist())
+                print(f"📂 Found {len(existing_urls)} existing URLs in master dataset")
+                print(f"   Will fetch only NEW urls to avoid duplicates\n")
+        except Exception as e:
+            print(f"⚠️  Could not load existing URLs: {e}\n")
+
     all_urls = []
 
     # 1. PhishTank (phishing URLs) - Get ALL available
@@ -196,6 +209,15 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     # Final deduplication and limiting
     df = pd.DataFrame(all_urls)
     df = df.drop_duplicates(subset=['url'])
+
+    # Filter out URLs that already exist in master dataset
+    if existing_urls:
+        before_count = len(df)
+        df = df[~df['url'].isin(existing_urls)]
+        removed_count = before_count - len(df)
+        print()
+        print(f"🔄 Removed {removed_count} duplicate URLs that already exist in master dataset")
+        print(f"   {len(df)} NEW urls remaining")
 
     # If we have more than target, sample to get exact target with balanced classes
     if len(df) > target_count:
