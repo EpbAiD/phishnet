@@ -194,19 +194,18 @@ jobs:
 
       - name: Extract DNS/WHOIS on VM
         run: |
-          # Upload batch and script to GCS
+          # Upload batch to GCS
           gcloud storage cp ${{ env.batch_file }} gs://phishnet-pipeline-data/queue/${{ env.batch_name }}
-          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
 
-          # Process on VM (without cd - use absolute paths or rely on home directory)
+          # Process on VM using existing eeshanbhanap user's project
           gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} \
-            --command="mkdir -p ~/phishnet/scripts ~/phishnet/vm_data/url_queue ~/phishnet/vm_data/incremental && \
-                       gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py ~/phishnet/scripts/ && \
-                       gcloud storage cp gs://phishnet-pipeline-data/queue/${{ env.batch_name }} ~/phishnet/vm_data/url_queue/ && \
-                       cd ~/phishnet && \
+            --command="sudo -u eeshanbhanap bash -c '\
+                       cd /home/eeshanbhanap/phishnet && \
+                       mkdir -p vm_data/url_queue vm_data/incremental && \
+                       gcloud storage cp gs://phishnet-pipeline-data/queue/${{ env.batch_name }} vm_data/url_queue/ && \
                        python3 scripts/extract_vm_features.py vm_data/url_queue/${{ env.batch_name }} ${{ env.batch_date }} && \
                        gcloud storage cp vm_data/incremental/dns_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/ && \
-                       gcloud storage cp vm_data/incremental/whois_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/"
+                       gcloud storage cp vm_data/incremental/whois_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/'"
 
           # Download results
           mkdir -p vm_data/incremental
