@@ -1,18 +1,21 @@
-name: Daily Pipeline (End-to-End) - TEST ONLY
+name: Validation Pipeline - Complete End-to-End
 
-# This workflow was for testing end-to-end flow
-# Production uses: daily_data_pipeline.yml (daily) + weekly_model_retrain.yml (weekly)
+# VALIDATION WORKFLOW: Run 10 times to prove system works
+# Each run: Collect 1000 URLs → Extract features → Train → Deploy
+# Master dataset grows: 1K → 2K → 3K → ... → 10K
+# Models improve with accumulated data
 
 on:
-  # DISABLED - Use separate daily collection + weekly training workflows
-  # schedule:
-  #   - cron: '0 14 * * *'
   workflow_dispatch:
     inputs:
       num_urls:
         description: 'Number of URLs to collect'
         required: false
         default: '1000'
+      run_number:
+        description: 'Run number (1-10) for tracking'
+        required: false
+        default: '1'
 
 env:
   GCP_PROJECT_ID: coms-452404
