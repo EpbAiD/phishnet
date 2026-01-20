@@ -202,7 +202,8 @@ jobs:
         run: |
           echo "Downloading updated master dataset from GCS..."
           mkdir -p data/processed
-          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_complete.csv data/processed/
+          # Use new master file for validation testing
+          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv data/processed/phishing_features_complete.csv
 
   # ========================================================================
   # JOB 3: Model Training
