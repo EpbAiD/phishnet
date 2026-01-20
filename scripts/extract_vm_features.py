@@ -75,6 +75,7 @@ def extract_and_accumulate(batch_date: str):
     for idx, row in df_batch.iterrows():
         print(f"[{idx+1}/{len(df_batch)}] {row['url']}")
         features = extract_single_domain_features(row['url'])
+        features['url'] = row['url']  # Add URL column
         dns_features.append(features)
 
     df_dns = pd.DataFrame(dns_features)
@@ -89,6 +90,7 @@ def extract_and_accumulate(batch_date: str):
     for idx, row in df_batch.iterrows():
         print(f"[{idx+1}/{len(df_batch)}] {row['url']}")
         features = extract_single_whois_features(row['url'])
+        features['url'] = row['url']  # Add URL column
         whois_features.append(features)
 
     df_whois = pd.DataFrame(whois_features)
