@@ -200,13 +200,19 @@ jobs:
             echo "VM already running"
           fi
 
+      - name: Upload updated VM script to GCS
+        run: |
+          echo "Uploading updated VM script..."
+          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
+
       - name: VM Processing (DNS/WHOIS extraction + accumulation)
         run: |
           echo "Triggering VM to process batch..."
-          # VM handles everything: downloads batch, extracts DNS/WHOIS, merges, accumulates to GCS
+          # Upload latest script to VM and run it
           gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} \
             --command="sudo -u eeshanbhanap bash -c '\
                        cd /home/eeshanbhanap/phishnet && \
+                       gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && \
                        python3 scripts/extract_vm_features.py ${{ env.batch_date }}'"
 
           echo "✅ VM processing complete - master dataset updated in GCS"
