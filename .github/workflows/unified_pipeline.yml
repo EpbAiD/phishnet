@@ -179,81 +179,30 @@ jobs:
       - name: Extract URL Features
         run: |
           echo "Extracting URL features..."
-          python3 scripts/extract_url_features.py ${{ env.batch_file }} data/processed/phishing_features_complete_url.csv
+          python3 scripts/extract_url_features.py ${{ env.batch_file }} data/processed/url_features_${{ env.batch_date }}.csv
 
-      - name: Start VM
+      - name: Upload batch to GCS for VM processing
         run: |
-          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} --format="get(status)")
-
-          if [ "$VM_STATUS" = "TERMINATED" ]; then
-            echo "Starting VM..."
-            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
-            sleep 90
-          fi
-
-      - name: Extract DNS/WHOIS on VM
-        run: |
-          # Upload batch to GCS
+          echo "Uploading batch and URL features to GCS..."
           gcloud storage cp ${{ env.batch_file }} gs://phishnet-pipeline-data/queue/${{ env.batch_name }}
+          gcloud storage cp data/processed/url_features_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/queue/url_features_${{ env.batch_date }}.csv
 
-          # Process on VM using existing eeshanbhanap user's project
+      - name: VM Processing (DNS/WHOIS extraction + accumulation)
+        run: |
+          echo "Triggering VM to process batch..."
+          # VM handles everything: downloads batch, extracts DNS/WHOIS, merges, accumulates to GCS
           gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} \
             --command="sudo -u eeshanbhanap bash -c '\
                        cd /home/eeshanbhanap/phishnet && \
-                       mkdir -p vm_data/url_queue vm_data/incremental && \
-                       gcloud storage cp gs://phishnet-pipeline-data/queue/${{ env.batch_name }} vm_data/url_queue/ && \
-                       python3 scripts/extract_vm_features.py vm_data/url_queue/${{ env.batch_name }} ${{ env.batch_date }} && \
-                       gcloud storage cp vm_data/incremental/dns_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/ && \
-                       gcloud storage cp vm_data/incremental/whois_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/incremental/'"
+                       python3 scripts/extract_vm_features.py ${{ env.batch_date }}'"
 
-          # Download results
-          mkdir -p vm_data/incremental
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/dns_${{ env.batch_date }}.csv vm_data/incremental/
-          gcloud storage cp gs://phishnet-pipeline-data/incremental/whois_${{ env.batch_date }}.csv vm_data/incremental/
+          echo "✅ VM processing complete - master dataset updated in GCS"
 
-      - name: Stop VM
-        if: always()
+      - name: Download master dataset from GCS for training
         run: |
-          gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} || true
-
-      - name: Download master dataset from GCS
-        continue-on-error: true
-        run: |
-          echo "Downloading master dataset from GCS..."
+          echo "Downloading updated master dataset from GCS..."
           mkdir -p data/processed
-          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_complete.csv data/processed/ || echo "No master dataset found (first run)"
-
-      - name: Merge and accumulate features
-        run: |
-          # Merge new batch features
-          python3 scripts/merge_features.py \
-            data/processed/phishing_features_complete_url.csv \
-            vm_data/incremental/dns_${{ env.batch_date }}.csv \
-            vm_data/incremental/whois_${{ env.batch_date }}.csv \
-            data/processed/phishing_features_new.csv
-
-          # Accumulate with existing data
-          if [ -f "data/processed/phishing_features_complete.csv" ]; then
-            echo "Accumulating with existing data..."
-            python3 scripts/accumulate_features.py \
-              data/processed/phishing_features_complete.csv \
-              data/processed/phishing_features_new.csv \
-              data/processed/phishing_features_complete.csv
-          else
-            echo "First run - using new data as master"
-            mv data/processed/phishing_features_new.csv data/processed/phishing_features_complete.csv
-          fi
-
-          # Upload updated master dataset back to GCS
-          echo "Uploading updated master dataset to GCS..."
-          gcloud storage cp data/processed/phishing_features_complete.csv gs://phishnet-pipeline-data/master/
-
-      - name: Upload features as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: features-${{ env.batch_date }}
-          path: data/processed/phishing_features_complete.csv
+          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_complete.csv data/processed/
 
   # ========================================================================
   # JOB 3: Model Training
