@@ -108,10 +108,11 @@ def extract_and_accumulate(batch_date: str):
     print("STEP 5: Download existing master dataset from GCS")
     print("=" * 60)
 
-    master_file = "vm_data/master/phishing_features_complete.csv"
+    # Use new filename for validation testing (phishing_features_master_v2.csv)
+    master_file = "vm_data/master/phishing_features_master_v2.csv"
     result = subprocess.run([
         "gcloud", "storage", "cp",
-        "gs://phishnet-pipeline-data/master/phishing_features_complete.csv",
+        "gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv",
         master_file
     ], capture_output=True, text=True)
 

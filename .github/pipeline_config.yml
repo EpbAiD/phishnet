@@ -16,7 +16,7 @@ stages:
   # STAGE 1: Data Collection
   data_collection:
     frequency: "daily"       # How often to collect URLs
-    num_urls: 1000           # URLs per collection
+    num_urls: 100            # URLs per collection (reduced for validation testing)
     enabled: true
 
   # STAGE 2: Feature Extraction (VM Processing)
@@ -37,7 +37,7 @@ stages:
 # Validation Settings
 validation:
   runs_needed: 10            # Number of runs to validate system
-  runs_completed: 3          # Track progress (auto-updated by workflow)
+  runs_completed: 0          # Track progress (auto-updated by workflow) - RESET for 100 URL test
 
 # Schedule Settings (auto-generated from frequencies above)
 schedules:
