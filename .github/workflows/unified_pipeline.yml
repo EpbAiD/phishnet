@@ -217,13 +217,12 @@ jobs:
         run: |
           gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} || true
 
-      - name: Download previous features for accumulation
-        uses: actions/download-artifact@v4
+      - name: Download master dataset from GCS
         continue-on-error: true
-        with:
-          pattern: features-*
-          merge-multiple: true
-          path: data/processed/
+        run: |
+          echo "Downloading master dataset from GCS..."
+          mkdir -p data/processed
+          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_complete.csv data/processed/ || echo "No master dataset found (first run)"
 
       - name: Merge and accumulate features
         run: |
@@ -245,6 +244,10 @@ jobs:
             echo "First run - using new data as master"
             mv data/processed/phishing_features_new.csv data/processed/phishing_features_complete.csv
           fi
+
+          # Upload updated master dataset back to GCS
+          echo "Uploading updated master dataset to GCS..."
+          gcloud storage cp data/processed/phishing_features_complete.csv gs://phishnet-pipeline-data/master/
 
       - name: Upload features as artifact
         uses: actions/upload-artifact@v4
