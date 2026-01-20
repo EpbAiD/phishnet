@@ -164,10 +164,18 @@ def extract_and_accumulate(batch_date: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    # Support both old and new calling conventions
+    # Old: python extract_vm_features.py vm_data/url_queue/batch_X.csv YYYYMMDD
+    # New: python extract_vm_features.py YYYYMMDD
+    if len(sys.argv) == 2:
+        # New format: just batch_date
+        batch_date = sys.argv[1]
+    elif len(sys.argv) == 3:
+        # Old format: batch_file batch_date (ignore batch_file, get from GCS)
+        batch_date = sys.argv[2]
+    else:
         print("Usage: python extract_vm_features.py <batch_date>")
         print("Example: python extract_vm_features.py 20260120")
         sys.exit(1)
 
-    batch_date = sys.argv[1]
     extract_and_accumulate(batch_date)
