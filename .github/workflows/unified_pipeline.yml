@@ -229,6 +229,13 @@ jobs:
           # Use new master file for validation testing
           gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv data/processed/phishing_features_complete.csv
 
+      - name: Upload master dataset as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: features-master
+          path: data/processed/phishing_features_complete.csv
+          retention-days: 1
+
   # ========================================================================
   # JOB 3: Model Training
   # ========================================================================
@@ -253,12 +260,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download features
-        uses: actions/download-artifact@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          pattern: features-*
-          merge-multiple: true
-          path: data/processed/
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup GCloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download master dataset from GCS
+        run: |
+          echo "Downloading master dataset from GCS..."
+          mkdir -p data/processed
+          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv data/processed/phishing_features_complete.csv
 
       - name: Prepare model-ready datasets
         run: |
