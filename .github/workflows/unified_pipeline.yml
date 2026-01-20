@@ -187,6 +187,19 @@ jobs:
           gcloud storage cp ${{ env.batch_file }} gs://phishnet-pipeline-data/queue/${{ env.batch_name }}
           gcloud storage cp data/processed/url_features_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/queue/url_features_${{ env.batch_date }}.csv
 
+      - name: Start VM
+        run: |
+          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
+            --zone=${{ env.GCP_ZONE }} --format="get(status)")
+
+          if [ "$VM_STATUS" = "TERMINATED" ]; then
+            echo "Starting VM..."
+            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
+            sleep 90
+          else
+            echo "VM already running"
+          fi
+
       - name: VM Processing (DNS/WHOIS extraction + accumulation)
         run: |
           echo "Triggering VM to process batch..."
@@ -197,6 +210,11 @@ jobs:
                        python3 scripts/extract_vm_features.py ${{ env.batch_date }}'"
 
           echo "✅ VM processing complete - master dataset updated in GCS"
+
+      - name: Stop VM
+        if: always()
+        run: |
+          gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} || true
 
       - name: Download master dataset from GCS for training
         run: |
