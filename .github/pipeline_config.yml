@@ -37,7 +37,7 @@ stages:
 # Validation Settings
 validation:
   runs_needed: 10            # Number of runs to validate system
-  runs_completed: 5          # Track progress (auto-updated by workflow) - RESET for 100 URL test
+  runs_completed: 6          # Track progress (auto-updated by workflow) - RESET for 100 URL test
 
 # Schedule Settings (auto-generated from frequencies above)
 schedules:
