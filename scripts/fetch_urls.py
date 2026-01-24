@@ -200,9 +200,11 @@ def fetch_urls(output_file: str, target_count: int = 1000):
         print()
         print(f"📊 Total unique phishing URLs fetched this round: {phishing_total}")
 
-        # 5. Legitimate URLs - Generate proportional amount for balance
-        legit_needed = remaining_needed // 2
-        print(f"→ Generating {legit_needed} legitimate URLs for balanced dataset...")
+        # 5. Legitimate URLs - Generate more to fix class imbalance
+        # TEMPORARY: Prioritizing legitimate URLs to reach 50:50 balance in master dataset
+        # Current master has 91.9% phishing, need to collect MORE legitimate URLs
+        legit_needed = int(remaining_needed * 0.70)  # 70% legitimate for faster balancing
+        print(f"→ Generating {legit_needed} legitimate URLs (70% ratio to fix class imbalance)...")
 
         legit_domains = [
             # Top websites
@@ -214,40 +216,105 @@ def fetch_urls(output_file: str, target_count: int = 1000):
             'cnn.com', 'bbc.com', 'nytimes.com', 'theguardian.com', 'reuters.com',
             'bloomberg.com', 'forbes.com', 'washingtonpost.com', 'wsj.com', 'espn.com',
             'usatoday.com', 'time.com', 'nationalgeographic.com', 'wired.com', 'techcrunch.com',
+            'npr.org', 'politico.com', 'economist.com', 'ft.com', 'latimes.com',
+            'cbsnews.com', 'nbcnews.com', 'abcnews.go.com', 'foxnews.com', 'msnbc.com',
+            'apnews.com', 'huffpost.com', 'axios.com', 'vox.com', 'buzzfeed.com',
+            'businessinsider.com', 'variety.com', 'hollywoodreporter.com', 'deadline.com', 'ign.com',
 
             # Tech & Development
             'github.com', 'stackoverflow.com', 'medium.com', 'dev.to', 'gitlab.com',
             'bitbucket.org', 'npmjs.com', 'pypi.org', 'docker.com', 'kubernetes.io',
             'aws.amazon.com', 'cloud.google.com', 'azure.microsoft.com', 'heroku.com', 'vercel.com',
+            'digitalocean.com', 'linode.com', 'cloudflare.com', 'netlify.com', 'mongodb.com',
+            'postgres.org', 'redis.io', 'elastic.co', 'jenkins.io', 'circleci.com',
+            'travis-ci.com', 'codepen.io', 'replit.com', 'glitch.com', 'codesandbox.io',
+            'hackernews.com', 'techradar.com', 'arstechnica.com', 'theverge.com', 'engadget.com',
+            'cnet.com', 'zdnet.com', 'venturebeat.com', 'slashdot.org', 'pcmag.com',
 
             # E-commerce
             'ebay.com', 'walmart.com', 'target.com', 'bestbuy.com', 'etsy.com',
             'aliexpress.com', 'shopify.com', 'wayfair.com', 'homedepot.com', 'lowes.com',
             'costco.com', 'macys.com', 'nordstrom.com', 'zappos.com', 'overstock.com',
+            'kohls.com', 'jcpenney.com', 'sephora.com', 'ulta.com', 'nike.com',
+            'adidas.com', 'gap.com', 'zara.com', 'hm.com', 'uniqlo.com',
+            'ikea.com', 'crateandbarrel.com', 'williams-sonoma.com', 'bedbathandbeyond.com', 'chewy.com',
+            'newegg.com', 'bhphotovideo.com', 'rei.com', 'dickssportinggoods.com', 'gamestop.com',
 
-            # Services
+            # Financial Services
             'paypal.com', 'stripe.com', 'chase.com', 'bankofamerica.com', 'wellsfargo.com',
-            'gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'protonmail.com',
             'venmo.com', 'squareup.com', 'citibank.com', 'usbank.com', 'capitalone.com',
+            'americanexpress.com', 'discover.com', 'fidelity.com', 'schwab.com', 'vanguard.com',
+            'etrade.com', 'tdameritrade.com', 'robinhood.com', 'coinbase.com', 'kraken.com',
+            'mint.com', 'creditkarma.com', 'nerdwallet.com', 'experian.com', 'equifax.com',
+            'transunion.com', 'truist.com', 'pnc.com', 'regions.com', 'ally.com',
+
+            # Email & Communication
+            'gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'protonmail.com',
+            'zoho.com', 'aol.com', 'mail.com', 'gmx.com', 'tutanota.com',
+            'fastmail.com', 'yandex.com', 'disroot.org', 'mailfence.com', 'runbox.com',
 
             # Education
             'coursera.org', 'udemy.com', 'khanacademy.org', 'edx.org', 'mit.edu',
             'stanford.edu', 'harvard.edu', 'berkeley.edu', 'yale.edu', 'oxford.ac.uk',
             'cambridge.ac.uk', 'princeton.edu', 'columbia.edu', 'cornell.edu', 'upenn.edu',
+            'caltech.edu', 'uchicago.edu', 'northwestern.edu', 'duke.edu', 'jhu.edu',
+            'umich.edu', 'ucla.edu', 'ucsd.edu', 'ucsb.edu', 'uci.edu',
+            'uw.edu', 'utexas.edu', 'wisc.edu', 'uiuc.edu', 'umn.edu',
+            'codecademy.com', 'pluralsight.com', 'skillshare.com', 'udacity.com', 'datacamp.com',
+            'brilliant.org', 'duolingo.com', 'memrise.com', 'babbel.com', 'rosettastone.com',
 
-            # Entertainment
+            # Entertainment & Streaming
             'spotify.com', 'twitch.tv', 'tiktok.com', 'vimeo.com', 'soundcloud.com',
             'hulu.com', 'disneyplus.com', 'hbo.com', 'primevideo.com', 'crunchyroll.com',
             'pandora.com', 'imgur.com', 'deviantart.com', 'behance.net', 'artstation.com',
+            'pinterest.com', 'flickr.com', 'unsplash.com', 'pexels.com', 'giphy.com',
+            'dailymotion.com', 'metacafe.com', 'rumble.com', 'odysee.com', 'dtube.video',
+            'imdb.com', 'rottentomatoes.com', 'letterboxd.com', 'allmovie.com', 'moviefone.com',
 
             # Cloud & SaaS
             'salesforce.com', 'slack.com', 'notion.so', 'trello.com', 'asana.com',
             'atlassian.com', 'monday.com', 'zendesk.com', 'hubspot.com', 'mailchimp.com',
             'airtable.com', 'figma.com', 'canva.com', 'miro.com', 'clickup.com',
+            'freshdesk.com', 'intercom.com', 'drift.com', 'typeform.com', 'surveymonkey.com',
+            'jotform.com', 'wufoo.com', 'formstack.com', 'cognito.com', 'calendly.com',
+            'docusign.com', 'hellosign.com', 'adobe.io', 'smartsheet.com', 'workday.com',
 
             # Travel & Transportation
             'booking.com', 'airbnb.com', 'expedia.com', 'tripadvisor.com', 'kayak.com',
-            'uber.com', 'lyft.com', 'delta.com', 'united.com', 'southwest.com'
+            'uber.com', 'lyft.com', 'delta.com', 'united.com', 'southwest.com',
+            'americanairlines.com', 'jetblue.com', 'spirit.com', 'frontier.com', 'allegiant.com',
+            'hotels.com', 'priceline.com', 'hotwire.com', 'orbitz.com', 'travelocity.com',
+            'vrbo.com', 'homeaway.com', 'hostelworld.com', 'agoda.com', 'rentalcars.com',
+            'skyscanner.com', 'momondo.com', 'kiwi.com', 'dohop.com', 'rome2rio.com',
+
+            # Government & Public
+            'usa.gov', 'irs.gov', 'uscis.gov', 'usps.com', 'whitehouse.gov',
+            'congress.gov', 'senate.gov', 'house.gov', 'fda.gov', 'cdc.gov',
+            'nih.gov', 'nasa.gov', 'noaa.gov', 'usgs.gov', 'nps.gov',
+            'state.gov', 'defense.gov', 'va.gov', 'opm.gov', 'gsa.gov',
+            'dmv.org', 'medicare.gov', 'socialsecurity.gov', 'weather.gov', 'ready.gov',
+
+            # Health & Medical
+            'mayoclinic.org', 'clevelandclinic.org', 'hopkinsmedicine.org', 'webmd.com', 'healthline.com',
+            'medlineplus.gov', 'drugs.com', 'rxlist.com', 'cvs.com', 'walgreens.com',
+            'rite-aid.com', 'express-scripts.com', 'goodrx.com', 'blink health.com', 'ro.co',
+            'teladoc.com', 'mdlive.com', 'zocdoc.com', 'healthgrades.com', 'vitals.com',
+
+            # Food & Delivery
+            'doordash.com', 'ubereats.com', 'grubhub.com', 'postmates.com', 'seamless.com',
+            'instacart.com', 'shipt.com', 'freshdirect.com', 'peapod.com', 'amazon fresh.com',
+            'dominos.com', 'pizzahut.com', 'papajohns.com', 'mcdonalds.com', 'starbucks.com',
+            'chipotle.com', 'subway.com', 'wendys.com', 'tacobell.com', 'kfc.com',
+
+            # Social & Community
+            'discord.com', 'telegram.org', 'signal.org', 'whatsapp.com', 'snapchat.com',
+            'tumblr.com', 'meetup.com', 'nextdoor.com', 'yelp.com', 'foursquare.com',
+            'quora.com', 'answers.com', 'ask.com', 'yahoo.answers.com', 'reddit.com',
+
+            # Gaming
+            'steam.com', 'epicgames.com', 'gog.com', 'origin.com', 'ubisoft.com',
+            'ea.com', 'blizzard.com', 'riotgames.com', 'valvesoftware.com', 'minecraft.net',
+            'playstation.com', 'xbox.com', 'nintendo.com', 'roblox.com', 'fortnite.com'
         ]
 
         legit_urls = []
@@ -317,28 +384,31 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     # Create final dataframe from collected URLs
     df_all_collected = pd.DataFrame(collected_new_urls)
 
-    # Balance classes if possible - aim for 50/50 split
+    # Balance classes - TEMPORARY: Prioritize legitimate URLs to fix master dataset imbalance
+    # Master dataset is 91.9% phishing, so we collect 70% legitimate, 30% phishing
     df_phish = df_all_collected[df_all_collected['label'] == 'phishing']
     df_legit = df_all_collected[df_all_collected['label'] == 'legitimate']
 
-    n_per_class = target_count // 2
+    # Calculate target split: 70% legitimate, 30% phishing
+    n_legit_target = int(target_count * 0.70)
+    n_phish_target = int(target_count * 0.30)
 
     # Sample from each class
-    df_phish_sample = df_phish.sample(n=min(len(df_phish), n_per_class), random_state=42) if len(df_phish) > 0 else df_phish
-    df_legit_sample = df_legit.sample(n=min(len(df_legit), n_per_class), random_state=42) if len(df_legit) > 0 else df_legit
+    df_phish_sample = df_phish.sample(n=min(len(df_phish), n_phish_target), random_state=42) if len(df_phish) > 0 else df_phish
+    df_legit_sample = df_legit.sample(n=min(len(df_legit), n_legit_target), random_state=42) if len(df_legit) > 0 else df_legit
 
     # If one class is short, take more from the other to reach target
     total_sampled = len(df_phish_sample) + len(df_legit_sample)
     if total_sampled < target_count:
         shortage = target_count - total_sampled
-        if len(df_phish_sample) < n_per_class and len(df_phish) > len(df_phish_sample):
-            # Take more phishing
-            additional = min(shortage, len(df_phish) - len(df_phish_sample))
-            df_phish_sample = df_phish.sample(n=len(df_phish_sample) + additional, random_state=42)
-        elif len(df_legit_sample) < n_per_class and len(df_legit) > len(df_legit_sample):
-            # Take more legitimate
+        if len(df_legit_sample) < n_legit_target and len(df_legit) > len(df_legit_sample):
+            # Prioritize legitimate URLs
             additional = min(shortage, len(df_legit) - len(df_legit_sample))
             df_legit_sample = df_legit.sample(n=len(df_legit_sample) + additional, random_state=42)
+        elif len(df_phish_sample) < n_phish_target and len(df_phish) > len(df_phish_sample):
+            # Take more phishing if legitimate is maxed out
+            additional = min(shortage, len(df_phish) - len(df_phish_sample))
+            df_phish_sample = df_phish.sample(n=len(df_phish_sample) + additional, random_state=42)
 
     # Combine
     df_final = pd.concat([df_phish_sample, df_legit_sample], ignore_index=True)
