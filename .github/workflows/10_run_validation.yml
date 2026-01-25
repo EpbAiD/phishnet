@@ -53,10 +53,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup SSH key for EC2
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          # Verify key was written
+          echo "SSH key file size: $(wc -c < ~/.ssh/ec2_key) bytes"
+          head -1 ~/.ssh/ec2_key
+
       - name: Run validation loop
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
           TOTAL_RUNS="${{ github.event.inputs.run_count || '10' }}"
           URLS_PER_RUN="${{ github.event.inputs.urls_per_run || '100' }}"
@@ -72,11 +78,6 @@ jobs:
           mkdir -p analysis/validation_runs
           RESULTS_FILE="analysis/validation_runs/results_$(date +%Y%m%d_%H%M%S).csv"
           echo "run,total_urls,new_urls_added,phishing,legitimate,best_accuracy,best_f1,best_ensemble" > $RESULTS_FILE
-
-          # Setup SSH key for EC2
-          mkdir -p ~/.ssh
-          echo "$EC2_SSH_KEY" > ~/.ssh/ec2_key
-          chmod 600 ~/.ssh/ec2_key
 
           for RUN_NUM in $(seq 1 $TOTAL_RUNS); do
             echo ""
@@ -158,8 +159,8 @@ jobs:
 
             echo ""
             echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ubuntu@$EC2_IP << EOFEC2
-              cd /home/ubuntu
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ec2-user@$EC2_IP << EOFEC2
+              cd /home/ec2-user/phishnet
               aws s3 cp s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv batch.csv
               aws s3 cp s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv url_features.csv
               aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py extract_vm_features_aws.py
