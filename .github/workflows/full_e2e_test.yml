@@ -396,126 +396,129 @@ jobs:
 
           y = df['label'].astype(int)
 
-          # Get feature columns
-          non_feature_cols = ['url', 'label', 'source', 'bucket']
-          feature_cols = [c for c in df.columns if c not in non_feature_cols]
-          X = df[feature_cols].fillna(0)
+          print(f"📊 Dataset: {len(y)} samples")
+          print(f"   Phishing: {sum(y)}, Legitimate: {len(y) - sum(y)}")
 
-          # Split data
-          X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+          # Evaluate the 3 production CatBoost models (same as API uses)
+          # These models have feature_names_ built in
+          production_models = [
+              ('url', 'models/url_catboost.pkl'),
+              ('dns', 'models/dns_catboost.pkl'),
+              ('whois', 'models/whois_catboost.pkl'),
+          ]
 
-          print(f"📊 Test set: {len(y_test)} samples")
-          print(f"   Phishing: {sum(y_test)}, Legitimate: {len(y_test) - sum(y_test)}")
+          results = {}
+          predictions = {}
 
-          # Find all models
-          model_files = [f for f in os.listdir('models') if f.endswith('.pkl') or f.endswith('.joblib')]
+          for model_type, model_path in production_models:
+              print(f"\n📈 Evaluating {model_type.upper()} model...")
 
-          url_models = [f for f in model_files if 'url' in f.lower()]
-          dns_models = [f for f in model_files if 'dns' in f.lower()]
-          whois_models = [f for f in model_files if 'whois' in f.lower()]
+              if not os.path.exists(model_path):
+                  print(f"   ⚠️ Model not found: {model_path}")
+                  continue
 
-          print(f"\n🔍 Found models: {len(url_models)} URL, {len(dns_models)} DNS, {len(whois_models)} WHOIS")
-
-          def evaluate_model(model_path, X_test, y_test):
-              """Evaluate a single model and return metrics."""
               try:
-                  model_data = joblib.load(model_path)
-                  if isinstance(model_data, dict):
-                      model = model_data.get('model', model_data)
-                      cols = model_data.get('feature_columns', list(X_test.columns))
-                  else:
-                      model = model_data
-                      cols = list(X_test.columns)
+                  model = joblib.load(model_path)
 
-                  # Align features
-                  X_aligned = X_test.reindex(columns=cols, fill_value=0)
+                  # CatBoost models have feature_names_ attribute
+                  if hasattr(model, 'feature_names_'):
+                      feature_cols = list(model.feature_names_)
+                  else:
+                      # Fallback: try to get from _feature_cols.pkl
+                      cols_path = model_path.replace('.pkl', '_feature_cols.pkl')
+                      if os.path.exists(cols_path):
+                          feature_cols = joblib.load(cols_path)
+                      else:
+                          print(f"   ⚠️ Cannot determine feature columns for {model_path}")
+                          continue
+
+                  # Prepare features for this model
+                  X = df.reindex(columns=feature_cols, fill_value=0)
+
+                  # Split data
+                  X_train, X_test, y_train, y_test = train_test_split(
+                      X, y, test_size=0.2, random_state=42, stratify=y
+                  )
 
                   # Get predictions
                   if hasattr(model, 'predict_proba'):
-                      proba = model.predict_proba(X_aligned)[:, 1]
+                      proba = model.predict_proba(X_test)[:, 1]
                   else:
-                      proba = model.predict(X_aligned)
+                      proba = model.predict(X_test)
 
                   preds = (proba >= 0.5).astype(int)
 
-                  return {
-                      'accuracy': accuracy_score(y_test, preds),
-                      'f1': f1_score(y_test, preds),
-                      'auc': roc_auc_score(y_test, proba) if len(np.unique(proba)) > 1 else 0.5,
-                      'proba': proba
+                  acc = accuracy_score(y_test, preds)
+                  f1 = f1_score(y_test, preds)
+                  auc = roc_auc_score(y_test, proba) if len(np.unique(proba)) > 1 else 0.5
+
+                  print(f"   ✅ {model_type}_catboost.pkl")
+                  print(f"      Accuracy: {acc:.4f}")
+                  print(f"      F1 Score: {f1:.4f}")
+                  print(f"      AUC-ROC:  {auc:.4f}")
+
+                  results[model_type] = {
+                      'model': f'{model_type}_catboost.pkl',
+                      'accuracy': acc,
+                      'f1': f1,
+                      'auc': auc
                   }
+                  predictions[model_type] = proba
+
               except Exception as e:
-                  print(f"   ⚠️ Error evaluating {model_path}: {e}")
-                  return None
+                  print(f"   ❌ Error: {e}")
 
-          # Evaluate each model type and find the best
-          best_models = {}
+          # Create ensemble prediction
+          print("\n🔗 Creating ensemble from production models...")
 
-          for model_type, model_list in [('url', url_models), ('dns', dns_models), ('whois', whois_models)]:
-              print(f"\n📈 Evaluating {model_type.upper()} models...")
-              best_score = 0
-              best_name = None
-              best_proba = None
+          if len(predictions) > 0:
+              # Average predictions from all available models
+              ensemble_proba = np.zeros(len(y_test))
+              for model_type, proba in predictions.items():
+                  ensemble_proba += proba
+              ensemble_proba /= len(predictions)
 
-              for model_file in model_list:
-                  result = evaluate_model(f'models/{model_file}', X_test, y_test)
-                  if result and result['f1'] > best_score:
-                      best_score = result['f1']
-                      best_name = model_file
-                      best_proba = result['proba']
-                      print(f"   ✓ {model_file}: F1={result['f1']:.4f}, AUC={result['auc']:.4f}")
-
-              if best_name:
-                  best_models[model_type] = {
-                      'name': best_name,
-                      'f1': best_score,
-                      'proba': best_proba
-                  }
-                  print(f"   🏆 Best {model_type.upper()}: {best_name} (F1={best_score:.4f})")
-
-          # Create ensemble prediction (average of best models)
-          print("\n🔗 Creating ensemble from best models...")
-
-          ensemble_proba = np.zeros(len(y_test))
-          n_models = 0
-
-          for model_type in ['url', 'dns', 'whois']:
-              if model_type in best_models and best_models[model_type]['proba'] is not None:
-                  ensemble_proba += best_models[model_type]['proba']
-                  n_models += 1
-
-          if n_models > 0:
-              ensemble_proba /= n_models
               ensemble_preds = (ensemble_proba >= 0.5).astype(int)
 
               ensemble_acc = accuracy_score(y_test, ensemble_preds)
               ensemble_f1 = f1_score(y_test, ensemble_preds)
               ensemble_auc = roc_auc_score(y_test, ensemble_proba)
 
-              print(f"\n🎯 ENSEMBLE RESULTS:")
+              print(f"\n🎯 ENSEMBLE RESULTS ({len(predictions)} models):")
               print(f"   Accuracy: {ensemble_acc:.4f}")
               print(f"   F1 Score: {ensemble_f1:.4f}")
               print(f"   AUC-ROC:  {ensemble_auc:.4f}")
 
               # Save results
-              results = {
-                  'best_url_model': best_models.get('url', {}).get('name', 'N/A'),
-                  'best_dns_model': best_models.get('dns', {}).get('name', 'N/A'),
-                  'best_whois_model': best_models.get('whois', {}).get('name', 'N/A'),
+              output = {
+                  'best_url_model': results.get('url', {}).get('model', 'N/A'),
+                  'best_dns_model': results.get('dns', {}).get('model', 'N/A'),
+                  'best_whois_model': results.get('whois', {}).get('model', 'N/A'),
+                  'url_metrics': results.get('url', {}),
+                  'dns_metrics': results.get('dns', {}),
+                  'whois_metrics': results.get('whois', {}),
                   'ensemble_accuracy': float(ensemble_acc),
                   'ensemble_f1': float(ensemble_f1),
-                  'ensemble_auc': float(ensemble_auc)
+                  'ensemble_auc': float(ensemble_auc),
+                  'n_models': len(predictions)
               }
 
               with open('models/best_ensemble.json', 'w') as f:
-                  json.dump(results, f, indent=2)
+                  json.dump(output, f, indent=2)
+
+              print(f"\n✅ Saved ensemble config to models/best_ensemble.json")
 
               # Write to GitHub output
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write(f"best_url_model={results['best_url_model']}\n")
-                  f.write(f"best_dns_model={results['best_dns_model']}\n")
-                  f.write(f"best_whois_model={results['best_whois_model']}\n")
-                  f.write(f"ensemble_accuracy={results['ensemble_accuracy']}\n")
+                  f.write(f"best_url_model={output['best_url_model']}\n")
+                  f.write(f"best_dns_model={output['best_dns_model']}\n")
+                  f.write(f"best_whois_model={output['best_whois_model']}\n")
+                  f.write(f"ensemble_accuracy={output['ensemble_accuracy']}\n")
+          else:
+              print("❌ No models could be evaluated")
+              # Create empty file so artifact upload doesn't fail
+              with open('models/best_ensemble.json', 'w') as f:
+                  json.dump({'error': 'No models evaluated'}, f)
 
           EOF
 
