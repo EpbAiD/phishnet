@@ -26,224 +26,164 @@ env:
 
 jobs:
   # ========================================================================
-  # Initialize validation tracking
+  # Single job that runs all 10 iterations sequentially
   # ========================================================================
-  init:
-    name: "Initialize Validation"
+  validation:
+    name: "Run 10 Validation Iterations"
     runs-on: ubuntu-latest
-    outputs:
-      total_runs: ${{ steps.init.outputs.total_runs }}
-      start_time: ${{ steps.init.outputs.start_time }}
+    timeout-minutes: 600  # 10 hours max
 
     steps:
-      - name: Initialize
-        id: init
-        run: |
-          TOTAL_RUNS="${{ github.event.inputs.run_count || '10' }}"
-          START_TIME=$(date +%Y%m%d_%H%M%S)
-
-          echo "total_runs=$TOTAL_RUNS" >> $GITHUB_OUTPUT
-          echo "start_time=$START_TIME" >> $GITHUB_OUTPUT
-
-          echo "🚀 Starting $TOTAL_RUNS validation runs"
-          echo "📅 Start time: $START_TIME"
-
-  # ========================================================================
-  # Run validation iterations
-  # ========================================================================
-  validation-run:
-    name: "Run ${{ matrix.run_num }}/10"
-    runs-on: ubuntu-latest
-    needs: init
-    timeout-minutes: 180
-    strategy:
-      max-parallel: 1  # Run sequentially so each builds on previous
-      matrix:
-        run_num: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-
-    steps:
-      - name: Check if should run
-        id: check
-        run: |
-          TOTAL_RUNS="${{ needs.init.outputs.total_runs }}"
-          CURRENT_RUN="${{ matrix.run_num }}"
-
-          if [ "$CURRENT_RUN" -le "$TOTAL_RUNS" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "✅ Running iteration $CURRENT_RUN of $TOTAL_RUNS"
-          else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "⏭️ Skipping iteration $CURRENT_RUN (only $TOTAL_RUNS runs requested)"
-          fi
-
       - name: Checkout code
-        if: steps.check.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: steps.check.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
-        if: steps.check.outputs.should_run == 'true'
-        run: pip install -r requirements.txt boto3
+        run: pip install -r requirements.txt boto3 pyarrow
 
       - name: Configure AWS credentials
-        if: steps.check.outputs.should_run == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # --------------------------------------------------------------------
-      # STEP 1: Download master & collect NEW URLs
-      # --------------------------------------------------------------------
-      - name: Download master dataset for duplicate checking
-        if: steps.check.outputs.should_run == 'true'
-        id: master
+      - name: Run validation loop
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
         run: |
-          echo "📥 Downloading master dataset from S3..."
-          mkdir -p data/processed
+          TOTAL_RUNS="${{ github.event.inputs.run_count || '10' }}"
+          URLS_PER_RUN="${{ github.event.inputs.urls_per_run || '100' }}"
 
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv || {
-            echo "⚠️ No master dataset found, starting fresh"
-            echo "url,label" > data/processed/phishing_features_complete.csv
-          }
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║         10-RUN PROGRESSIVE LEARNING VALIDATION               ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║  Runs: $TOTAL_RUNS | URLs per run: $URLS_PER_RUN                          ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
 
-          EXISTING_COUNT=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
-          echo "existing_urls=$EXISTING_COUNT" >> $GITHUB_OUTPUT
-          echo "📊 Master contains $EXISTING_COUNT existing URLs"
+          # Create results tracking file
+          mkdir -p analysis/validation_runs
+          RESULTS_FILE="analysis/validation_runs/results_$(date +%Y%m%d_%H%M%S).csv"
+          echo "run,total_urls,new_urls_added,phishing,legitimate,best_accuracy,best_f1,best_ensemble" > $RESULTS_FILE
 
-      - name: Collect NEW balanced URLs
-        if: steps.check.outputs.should_run == 'true'
-        id: collect
-        run: |
-          NUM_URLS="${{ github.event.inputs.urls_per_run || '100' }}"
-          BATCH_DATE=$(date +%Y%m%d_%H%M%S)
-          BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
+          # Setup SSH key for EC2
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
 
-          mkdir -p data/url_queue
-          echo "batch_date=$BATCH_DATE" >> $GITHUB_OUTPUT
+          for RUN_NUM in $(seq 1 $TOTAL_RUNS); do
+            echo ""
+            echo "═══════════════════════════════════════════════════════════════"
+            echo "                    RUN $RUN_NUM of $TOTAL_RUNS"
+            echo "═══════════════════════════════════════════════════════════════"
+            echo ""
 
-          echo "🔗 Collecting $NUM_URLS NEW unique URLs (Run ${{ matrix.run_num }})..."
-          python3 scripts/fetch_urls.py $BATCH_FILE $NUM_URLS
+            BATCH_DATE=$(date +%Y%m%d_%H%M%S)
+            BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
+            mkdir -p data/url_queue data/processed
 
-          # Count results
-          TOTAL=$(tail -n +2 $BATCH_FILE | wc -l | tr -d ' ')
-          PHISHING=$(grep -c ",phishing" $BATCH_FILE || echo "0")
-          LEGIT=$(grep -c ",legitimate" $BATCH_FILE || echo "0")
+            # ------------------------------------------------------------
+            # STEP 1: Download master for duplicate checking
+            # ------------------------------------------------------------
+            echo "📥 Step 1: Downloading master dataset..."
+            aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv 2>/dev/null || {
+              echo "   Creating new master dataset"
+              echo "url,label" > data/processed/phishing_features_complete.csv
+            }
 
-          echo "total_urls=$TOTAL" >> $GITHUB_OUTPUT
-          echo "phishing_count=$PHISHING" >> $GITHUB_OUTPUT
-          echo "legit_count=$LEGIT" >> $GITHUB_OUTPUT
+            BEFORE_COUNT=$(tail -n +2 data/processed/phishing_features_complete.csv 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            echo "   Master contains $BEFORE_COUNT existing URLs"
 
-          echo "📊 Collected $TOTAL NEW URLs:"
-          echo "   Phishing: $PHISHING"
-          echo "   Legitimate: $LEGIT"
+            # ------------------------------------------------------------
+            # STEP 2: Collect NEW unique URLs
+            # ------------------------------------------------------------
+            echo ""
+            echo "🔗 Step 2: Collecting $URLS_PER_RUN NEW unique URLs..."
+            python3 scripts/fetch_urls.py $BATCH_FILE $URLS_PER_RUN || {
+              echo "⚠️ URL collection failed, trying with smaller batch"
+              python3 scripts/fetch_urls.py $BATCH_FILE 50 || true
+            }
 
-      # --------------------------------------------------------------------
-      # STEP 2: Extract URL features locally
-      # --------------------------------------------------------------------
-      - name: Extract URL features
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          BATCH_DATE="${{ steps.collect.outputs.batch_date }}"
-          BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
-          URL_FEATURES="data/processed/url_features_${BATCH_DATE}.csv"
+            if [ ! -f "$BATCH_FILE" ]; then
+              echo "❌ Failed to collect URLs, skipping this run"
+              continue
+            fi
 
-          echo "🔍 Extracting URL features locally..."
-          python3 scripts/extract_url_features.py $BATCH_FILE $URL_FEATURES
+            # Count results
+            TOTAL=$(tail -n +2 $BATCH_FILE 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            PHISHING=$(grep -c ",phishing" $BATCH_FILE 2>/dev/null || echo "0")
+            LEGIT=$(grep -c ",legitimate" $BATCH_FILE 2>/dev/null || echo "0")
 
-          ROWS=$(tail -n +2 $URL_FEATURES | wc -l | tr -d ' ')
-          echo "✅ Extracted features for $ROWS URLs"
+            echo "   Collected: $TOTAL URLs (Phishing: $PHISHING, Legitimate: $LEGIT)"
 
-      # --------------------------------------------------------------------
-      # STEP 3: Upload to S3 and extract DNS/WHOIS on EC2
-      # --------------------------------------------------------------------
-      - name: Upload to S3 for EC2 processing
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          BATCH_DATE="${{ steps.collect.outputs.batch_date }}"
+            if [ "$TOTAL" -lt 5 ]; then
+              echo "⚠️ Too few URLs collected ($TOTAL), skipping this run"
+              continue
+            fi
 
-          echo "📤 Uploading to S3..."
-          aws s3 cp data/url_queue/batch_${BATCH_DATE}.csv s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv
-          aws s3 cp data/processed/url_features_${BATCH_DATE}.csv s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv
-          aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
+            # ------------------------------------------------------------
+            # STEP 3: Extract URL features locally
+            # ------------------------------------------------------------
+            echo ""
+            echo "🔍 Step 3: Extracting URL features locally..."
+            URL_FEATURES="data/processed/url_features_${BATCH_DATE}.csv"
+            python3 scripts/extract_url_features.py $BATCH_FILE $URL_FEATURES
 
-      - name: Start EC2 instance
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          echo "🖥️ Starting EC2 instance..."
-          aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
-          aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            # ------------------------------------------------------------
+            # STEP 4: Upload to S3 and process on EC2
+            # ------------------------------------------------------------
+            echo ""
+            echo "📤 Step 4: Uploading to S3..."
+            aws s3 cp $BATCH_FILE s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv
+            aws s3 cp $URL_FEATURES s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv
+            aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
 
-          # Wait for SSH
-          sleep 60
-          echo "✅ EC2 instance running"
+            echo ""
+            echo "🖥️ Step 5: Starting EC2 for DNS/WHOIS extraction..."
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            sleep 60  # Wait for SSH
 
-      - name: Extract DNS/WHOIS features on EC2
-        if: steps.check.outputs.should_run == 'true'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
-          command_timeout: 90m
-          script: |
-            echo "🔧 Setting up EC2 environment..."
-            cd /home/ubuntu
+            echo ""
+            echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ubuntu@$EC2_HOST << EOFEC2
+              cd /home/ubuntu
+              aws s3 cp s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv batch.csv
+              aws s3 cp s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv url_features.csv
+              aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py extract_vm_features_aws.py
+              aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv master.csv || echo "url,label" > master.csv
 
-            # Download files from S3
-            BATCH_DATE="${{ steps.collect.outputs.batch_date }}"
-            aws s3 cp s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv batch.csv
-            aws s3 cp s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv url_features.csv
-            aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py extract_vm_features_aws.py
+              python3 extract_vm_features_aws.py batch.csv url_features.csv master.csv --mode batch
 
-            # Download existing master
-            aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv master.csv || echo "url,label" > master.csv
+              aws s3 cp master.csv s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv
+              echo "✅ Updated master dataset"
+          EOFEC2
 
-            echo "📊 Current master: $(wc -l < master.csv) rows"
+            echo ""
+            echo "🛑 Stopping EC2 instance..."
+            aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
 
-            # Run feature extraction
-            echo "🔍 Extracting DNS/WHOIS features..."
-            python3 extract_vm_features_aws.py batch.csv url_features.csv master.csv --mode batch
+            # ------------------------------------------------------------
+            # STEP 7: Download updated master and train models
+            # ------------------------------------------------------------
+            echo ""
+            echo "📥 Step 7: Downloading updated master..."
+            aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
 
-            # Upload updated master
-            echo "📤 Uploading updated master to S3..."
-            aws s3 cp master.csv s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv
+            AFTER_COUNT=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
+            NEW_ADDED=$((AFTER_COUNT - BEFORE_COUNT))
+            echo "   Master now has $AFTER_COUNT URLs (+$NEW_ADDED new)"
 
-            NEW_COUNT=$(wc -l < master.csv)
-            echo "✅ Master now has $NEW_COUNT rows"
-
-      - name: Stop EC2 instance
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
-          echo "🛑 EC2 instance stopped"
-
-      # --------------------------------------------------------------------
-      # STEP 4: Download updated master and train models
-      # --------------------------------------------------------------------
-      - name: Download updated master
-        if: steps.check.outputs.should_run == 'true'
-        id: updated_master
-        run: |
-          echo "📥 Downloading updated master dataset..."
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
-
-          NEW_TOTAL=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
-          echo "new_total=$NEW_TOTAL" >> $GITHUB_OUTPUT
-          echo "📊 Master now contains $NEW_TOTAL total URLs"
-
-      - name: Prepare model-ready datasets
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          python3 << 'EOF'
+            echo ""
+            echo "🏋️ Step 8: Preparing model-ready datasets..."
+            python3 << 'EOFPY'
           import pandas as pd
           import numpy as np
 
@@ -261,33 +201,23 @@ jobs:
           dns_features = [c for c in df.columns if c.startswith('dns_')]
           whois_features = [c for c in df.columns if c.startswith('whois_')]
 
-          print(f"URL features: {len(url_features)}")
-          print(f"DNS features: {len(dns_features)}")
-          print(f"WHOIS features: {len(whois_features)}")
+          print(f"Features: URL={len(url_features)}, DNS={len(dns_features)}, WHOIS={len(whois_features)}")
 
-          # Create model-ready datasets
           for name, features in [('url', url_features), ('dns', dns_features), ('whois', whois_features)]:
               cols = features + ['label_encoded']
               df_subset = df[cols].copy()
               df_imputed = df_subset.fillna(0)
               df_imputed.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
-              print(f"Saved {name} features: {len(df_imputed)} rows, {len(features)} features")
+          EOFPY
 
-          print("✅ Model-ready datasets created")
-          EOF
-
-      - name: Train 45 models
-        if: steps.check.outputs.should_run == 'true'
-        id: train
-        run: |
-          echo "🏋️ Training 45 models (15 URL + 15 DNS + 15 WHOIS)..."
-          mkdir -p models
-
-          python3 << 'EOF'
+            echo ""
+            echo "🏋️ Step 9: Training 45 models..."
+            mkdir -p models
+            python3 << 'EOFPY'
           import pandas as pd
           import numpy as np
           from sklearn.model_selection import train_test_split
-          from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
+          from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, ExtraTreesClassifier, BaggingClassifier
           from sklearn.linear_model import LogisticRegression
           from sklearn.tree import DecisionTreeClassifier
           from sklearn.neighbors import KNeighborsClassifier
@@ -305,7 +235,7 @@ jobs:
           models = {
               'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
               'gradient_boost': GradientBoostingClassifier(n_estimators=100, random_state=42),
-              'adaboost': AdaBoostClassifier(n_estimators=100, random_state=42),
+              'adaboost': AdaBoostClassifier(n_estimators=100, random_state=42, algorithm='SAMME'),
               'logistic': LogisticRegression(max_iter=1000, random_state=42),
               'decision_tree': DecisionTreeClassifier(random_state=42),
               'knn': KNeighborsClassifier(n_neighbors=5),
@@ -315,21 +245,22 @@ jobs:
               'catboost': CatBoostClassifier(iterations=100, random_state=42, verbose=0),
               'lightgbm': LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
               'xgboost': XGBClassifier(n_estimators=100, random_state=42, verbosity=0),
-              'extra_trees': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, criterion='entropy'),
-              'bagging': AdaBoostClassifier(n_estimators=50, random_state=42),
+              'extra_trees': ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+              'bagging': BaggingClassifier(n_estimators=50, random_state=42),
               'voting_base': RandomForestClassifier(n_estimators=50, random_state=42),
           }
 
           results = {'url': {}, 'dns': {}, 'whois': {}}
 
           for feature_type in ['url', 'dns', 'whois']:
-              print(f"\n{'='*60}")
               print(f"Training {feature_type.upper()} models...")
-              print(f"{'='*60}")
-
               df = pd.read_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv')
               X = df.drop('label_encoded', axis=1)
               y = df['label_encoded']
+
+              if len(y.unique()) < 2:
+                  print(f"  Skipping {feature_type} - only one class")
+                  continue
 
               X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
@@ -338,141 +269,67 @@ jobs:
                       model.fit(X_train, y_train)
                       accuracy = model.score(X_test, y_test)
                       results[feature_type][name] = accuracy
-
                       joblib.dump(model, f'models/{feature_type}_{name}.pkl')
-                      print(f"  ✓ {name}: {accuracy:.4f}")
                   except Exception as e:
-                      print(f"  ✗ {name}: {e}")
+                      print(f"  {name}: {e}")
 
-          # Save results
           with open('models/training_results.json', 'w') as f:
               json.dump(results, f, indent=2)
 
-          # Find best models
-          print(f"\n{'='*60}")
-          print("BEST MODELS:")
-          print(f"{'='*60}")
+          print("\nBest models:")
           for feature_type in ['url', 'dns', 'whois']:
               if results[feature_type]:
                   best = max(results[feature_type].items(), key=lambda x: x[1])
                   print(f"  {feature_type.upper()}: {best[0]} ({best[1]:.4f})")
+          EOFPY
 
-          print("\n✅ All 45 models trained")
-          EOF
+            echo ""
+            echo "🔗 Step 10: Evaluating ensemble..."
+            python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 2>/dev/null || echo "Ensemble evaluation skipped"
 
-          echo "trained=true" >> $GITHUB_OUTPUT
+            # Get best results
+            BEST_ACC="N/A"
+            BEST_F1="N/A"
+            BEST_NAME="N/A"
+            if [ -f "models/training_results.json" ]; then
+              BEST_ACC=$(python3 -c "import json; r=json.load(open('models/training_results.json')); print(max(max(v.values()) for v in r.values() if v))" 2>/dev/null || echo "N/A")
+            fi
 
-      # --------------------------------------------------------------------
-      # STEP 5: Evaluate ensemble
-      # --------------------------------------------------------------------
-      - name: Evaluate ensemble
-        if: steps.check.outputs.should_run == 'true'
-        id: ensemble
-        run: |
-          echo "🔗 Evaluating ensemble combinations..."
+            LATEST_ENSEMBLE=$(ls -t analysis/ensemble_comparison/comparison_*.json 2>/dev/null | head -1)
+            if [ -n "$LATEST_ENSEMBLE" ]; then
+              BEST_F1=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(r[0].get('f1_score', 'N/A') if isinstance(r, list) else 'N/A')" 2>/dev/null || echo "N/A")
+              BEST_NAME=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(r[0].get('name', 'N/A') if isinstance(r, list) else 'N/A')" 2>/dev/null || echo "N/A")
+            fi
 
-          python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 || {
-            echo "⚠️ Ensemble comparison failed, using fallback"
-          }
+            # Record results
+            echo "$RUN_NUM,$AFTER_COUNT,$NEW_ADDED,$PHISHING,$LEGIT,$BEST_ACC,$BEST_F1,$BEST_NAME" >> $RESULTS_FILE
 
-          # Get best result
-          LATEST=$(ls -t analysis/ensemble_comparison/comparison_*.json 2>/dev/null | head -1)
-          if [ -n "$LATEST" ]; then
-            cp "$LATEST" models/best_ensemble.json
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════╗"
+            echo "║               RUN $RUN_NUM COMPLETE                              ║"
+            echo "╠══════════════════════════════════════════════════════════════╣"
+            echo "║  Dataset: $BEFORE_COUNT → $AFTER_COUNT URLs (+$NEW_ADDED new)              "
+            echo "║  Best Accuracy: $BEST_ACC                                    "
+            echo "║  Best Ensemble: $BEST_NAME                                   "
+            echo "╚══════════════════════════════════════════════════════════════╝"
 
-            python3 << EOF
-          import json
-          with open('models/best_ensemble.json') as f:
-              results = json.load(f)
-          if isinstance(results, list) and len(results) > 0:
-              best = results[0]
-              print(f"🏆 Best: {best.get('name', 'Unknown')}")
-              print(f"   Accuracy: {best.get('accuracy', 0):.4f}")
-              print(f"   F1: {best.get('f1_score', 0):.4f}")
-          EOF
-          fi
-
-      # --------------------------------------------------------------------
-      # STEP 6: Record validation results
-      # --------------------------------------------------------------------
-      - name: Record validation results
-        if: steps.check.outputs.should_run == 'true'
-        run: |
-          echo ""
-          echo "═══════════════════════════════════════════════════════════════"
-          echo "📊 VALIDATION RUN ${{ matrix.run_num }} COMPLETE"
-          echo "═══════════════════════════════════════════════════════════════"
-          echo ""
-          echo "Dataset Growth:"
-          echo "  Before: ${{ steps.master.outputs.existing_urls }} URLs"
-          echo "  Added:  ${{ steps.collect.outputs.total_urls }} NEW URLs"
-          echo "  After:  ${{ steps.updated_master.outputs.new_total }} total URLs"
-          echo ""
-          echo "URLs Collected (Run ${{ matrix.run_num }}):"
-          echo "  Phishing:   ${{ steps.collect.outputs.phishing_count }}"
-          echo "  Legitimate: ${{ steps.collect.outputs.legit_count }}"
-          echo ""
-          echo "═══════════════════════════════════════════════════════════════"
-
-      - name: Upload run artifacts
-        if: steps.check.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: validation-run-${{ matrix.run_num }}-${{ needs.init.outputs.start_time }}
-          path: |
-            models/training_results.json
-            models/best_ensemble.json
-            analysis/ensemble_comparison/
-          retention-days: 30
-
-  # ========================================================================
-  # Final summary
-  # ========================================================================
-  summary:
-    name: "Final Summary"
-    runs-on: ubuntu-latest
-    needs: [init, validation-run]
-    if: always()
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download final master
-        run: |
-          mkdir -p data/processed
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
-
-      - name: Print final summary
-        run: |
-          TOTAL_RUNS="${{ needs.init.outputs.total_runs }}"
-          URLS_PER_RUN="${{ github.event.inputs.urls_per_run || '100' }}"
-          FINAL_COUNT=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
+            # Small delay between runs
+            sleep 5
+          done
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║           10-RUN VALIDATION COMPLETE                         ║"
+          echo "║            ALL VALIDATION RUNS COMPLETE                      ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
-          echo "Configuration:"
-          echo "  Total runs:     $TOTAL_RUNS"
-          echo "  URLs per run:   $URLS_PER_RUN"
-          echo "  Expected total: $((TOTAL_RUNS * URLS_PER_RUN)) new URLs"
-          echo ""
-          echo "Results:"
-          echo "  Final dataset:  $FINAL_COUNT total URLs"
-          echo ""
-          echo "The models have progressively learned from:"
-          echo "  → $TOTAL_RUNS batches of $URLS_PER_RUN NEW unique URLs"
-          echo "  → Each batch excluded duplicates from previous runs"
-          echo "  → 45 models trained on growing dataset each iteration"
-          echo ""
-          echo "Download artifacts to see per-run accuracy progression!"
-          echo ""
+          echo "Results saved to: $RESULTS_FILE"
+          cat $RESULTS_FILE
+
+      - name: Upload validation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-results-${{ github.run_id }}
+          path: |
+            analysis/validation_runs/
+            models/training_results.json
+          retention-days: 30
