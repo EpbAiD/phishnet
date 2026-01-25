@@ -148,14 +148,40 @@ jobs:
 
             echo ""
             echo "🖥️ Step 5: Starting EC2 for DNS/WHOIS extraction..."
-            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
-            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+
+            # Check current state and handle accordingly
+            INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].State.Name' --output text)
+            echo "   Current state: $INSTANCE_STATE"
+
+            if [ "$INSTANCE_STATE" = "stopped" ]; then
+              echo "   Starting instance..."
+              aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              sleep 60  # Wait for SSH to be ready
+            elif [ "$INSTANCE_STATE" = "stopping" ]; then
+              echo "   Waiting for instance to stop..."
+              aws ec2 wait instance-stopped --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              echo "   Starting instance..."
+              aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              sleep 60  # Wait for SSH to be ready
+            elif [ "$INSTANCE_STATE" = "pending" ]; then
+              echo "   Waiting for instance to start..."
+              aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              sleep 60  # Wait for SSH to be ready
+            elif [ "$INSTANCE_STATE" = "running" ]; then
+              echo "   Instance already running"
+              sleep 10  # Brief wait for any ongoing operations
+            else
+              echo "   Unknown state: $INSTANCE_STATE, trying to start..."
+              aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+              aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+              sleep 60
+            fi
 
             # Get the public IP dynamically
             EC2_IP=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
             echo "   EC2 Public IP: $EC2_IP"
-
-            sleep 60  # Wait for SSH to be ready
 
             echo ""
             echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
