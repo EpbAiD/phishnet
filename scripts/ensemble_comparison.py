@@ -559,6 +559,10 @@ def run_ensemble_comparison(test_size: int = 1000, n_iterations: int = 100):
     logger.info("🎯 RECOMMENDATIONS")
     logger.info(f"{'=' * 80}")
 
+    if not results:
+        logger.warning("No ensemble results to report - all ensembles failed")
+        return results
+
     best_overall = results[0]
     logger.info(f"\n✅ BEST OVERALL: {best_overall['name']}")
     logger.info(f"   Score: {best_overall['composite_score']:.4f}")
