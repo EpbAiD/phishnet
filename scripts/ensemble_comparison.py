@@ -129,8 +129,8 @@ ENSEMBLE_CONFIGS = {
         "description": "Best algorithm for each feature type",
         "models": {
             "url": "url_catboost.pkl",      # CatBoost for URL (handles categories well)
-            "dns": "dns_lightgbm.pkl",      # LightGBM for DNS (fast)
-            "whois": "whois_xgboost.pkl"    # XGBoost for WHOIS (robust)
+            "dns": "dns_lightgbm.pkl",       # LightGBM for DNS (fast)
+            "whois": "whois_xgboost.pkl"     # XGBoost for WHOIS (robust)
         },
         "weights": {
             "url": 0.50,
@@ -197,6 +197,8 @@ class EnsemblePredictor:
         import joblib
 
         models_dir = Path("models")
+        self.feature_cols = {}  # Store expected feature columns for each model type
+
         for feature_type, model_file in self.config["models"].items():
             model_path = models_dir / model_file
 
@@ -207,6 +209,12 @@ class EnsemblePredictor:
             try:
                 self.models[feature_type] = joblib.load(model_path)
                 logger.info(f"Loaded {feature_type} model: {model_file}")
+
+                # Try to load the feature columns file
+                feature_cols_file = model_path.with_name(model_file.replace('.pkl', '_feature_cols.pkl'))
+                if feature_cols_file.exists():
+                    self.feature_cols[feature_type] = joblib.load(feature_cols_file)
+                    logger.info(f"  Loaded feature columns: {len(self.feature_cols[feature_type])} features")
             except Exception as e:
                 logger.error(f"Failed to load {model_path}: {e}")
 
@@ -215,7 +223,8 @@ class EnsemblePredictor:
         Make weighted ensemble prediction.
 
         Args:
-            features: Dict with keys 'url', 'dns', 'whois' (DataFrames or arrays)
+            features: Dict with keys 'url', 'dns', 'whois' containing feature arrays
+                     that match the expected feature order for each model
 
         Returns:
             (phishing_prob, legitimate_prob)
@@ -236,26 +245,8 @@ class EnsemblePredictor:
             if weight == 0:
                 continue
 
-            # Prepare features - some models (CatBoost, LightGBM) require matching feature names
+            # Get feature data
             feat_data = features[feature_type]
-
-            # Convert to DataFrame with model's expected feature names if available
-            try:
-                if hasattr(model, 'feature_names_'):
-                    # CatBoost
-                    feature_names = model.feature_names_
-                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
-                elif hasattr(model, 'feature_name_'):
-                    # LightGBM
-                    feature_names = model.feature_name_
-                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
-                elif hasattr(model, 'feature_names_in_'):
-                    # sklearn models
-                    feature_names = model.feature_names_in_
-                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
-            except Exception as e:
-                # If feature names don't match, just use raw array
-                logger.debug(f"Could not align features for {feature_type}: {e}")
 
             # Get prediction probabilities [legit_prob, phish_prob]
             proba = model.predict_proba(feat_data)
@@ -386,83 +377,115 @@ def load_test_data(test_size: int = 1000) -> Tuple[List[Dict], List[int]]:
     """
     Load test data for all feature types.
 
-    Looks for data in data/test/ first, then falls back to data/processed/.
+    IMPORTANT: The current models were trained on COMBINED features (84 features each).
+    This function loads the complete feature dataset and prepares features that match
+    what the models expect.
 
     Returns:
         (test_features, test_labels)
     """
-    # Determine which directory has the data
-    test_dir = Path("data/test")
+    import joblib
+
     processed_dir = Path("data/processed")
+    models_dir = Path("models")
 
-    if (test_dir / "url_features_modelready_imputed.csv").exists():
-        data_dir = test_dir
-        logger.info("Loading test data from data/test/ (held-out test set)...")
-    elif (processed_dir / "url_features_modelready_imputed.csv").exists():
-        data_dir = processed_dir
-        logger.info("Loading test data from data/processed/ (training data)...")
-    else:
-        raise FileNotFoundError("No model-ready data found in data/test/ or data/processed/")
+    # Load the complete feature dataset
+    complete_data_path = processed_dir / "phishing_features_complete.csv"
+    if not complete_data_path.exists():
+        # Fallback to seed file if complete doesn't exist
+        complete_data_path = processed_dir / "phishing_features_master_seed.csv"
+    if not complete_data_path.exists():
+        raise FileNotFoundError("No complete feature data found in data/processed/")
 
-    # Load URL features
-    url_df = pd.read_csv(data_dir / "url_features_modelready_imputed.csv")
-    # Check for label column - could be 'label' or 'label_encoded'
-    label_col = 'label_encoded' if 'label_encoded' in url_df.columns else 'label'
-    url_df = url_df[url_df[label_col].isin([0, 1])]  # Filter valid labels
-    logger.info(f"Loaded {len(url_df)} test URLs")
+    logger.info(f"Loading complete feature data from {complete_data_path}...")
+    df = pd.read_csv(complete_data_path)
 
-    # Load DNS features
-    dns_df = pd.read_csv(data_dir / "dns_features_modelready_imputed.csv")
+    # Check for label column
+    if 'label' in df.columns:
+        df['label_encoded'] = (df['label'] == 'phishing').astype(int)
+    label_col = 'label_encoded' if 'label_encoded' in df.columns else 'label'
 
-    # Load WHOIS features
-    whois_df = pd.read_csv(data_dir / "whois_features_modelready_imputed.csv")
+    # Filter valid labels
+    df = df[df[label_col].isin([0, 1])]
+    logger.info(f"Loaded {len(df)} samples with valid labels")
 
-    # Encode categorical columns to numeric (if any remain)
-    for df in [url_df, dns_df, whois_df]:
-        obj_cols = df.select_dtypes(include=["object"]).columns
-        for col in obj_cols:
-            if col not in ['url']:  # Don't encode URL column if present
-                df[col] = df[col].astype(str).fillna("MISSING")
-                df[col], _ = pd.factorize(df[col])
+    # Encode categorical columns to numeric
+    for col in df.columns:
+        if df[col].dtype == 'object' and col not in ['url', 'label']:
+            df[col] = df[col].fillna('MISSING')
+            df[col], _ = pd.factorize(df[col])
 
-    # Prepare feature arrays (model-ready files have features + label_encoded only)
+    # Try to load feature columns from actual model files
+    # This supports SEPARATE feature architecture where each model has different features
+    feature_cols = {}
+
+    for feature_type in ['url', 'dns', 'whois']:
+        # Try to load from model feature_cols file
+        feature_cols_file = models_dir / f"{feature_type}_catboost_feature_cols.pkl"
+        if feature_cols_file.exists():
+            try:
+                loaded_cols = joblib.load(feature_cols_file)
+                feature_cols[feature_type] = loaded_cols
+                logger.info(f"Loaded {feature_type} feature columns: {len(loaded_cols)} features")
+                continue
+            except Exception as e:
+                logger.warning(f"Could not load {feature_cols_file}: {e}")
+
+        # Fallback to hardcoded feature names from original extractors
+        logger.info(f"Using hardcoded feature names for {feature_type}")
+
+    # Define fallback feature groups from ORIGINAL extractors
+    url_feature_names = [
+        'url_length', 'hostname_length', 'path_length', 'num_subdomains', 'num_dots',
+        'num_special_chars', 'num_digits', 'num_uppercase_chars', 'has_at_symbol',
+        'has_double_slash_redirect', 'has_dash_in_domain', 'is_ip_address', 'ip_category',
+        'has_encoded_chars', 'has_non_ascii_chars', 'url_entropy', 'hostname_entropy',
+        'digit_to_letter_ratio', 'domain_quality', 'tld_length', 'subdomain_entropy',
+        'subdomain_length', 'has_login_keyword', 'has_suspicious_words', 'has_brand_mismatch',
+        'file_type', 'is_file_download', 'is_script_file', 'is_shortened', 'num_fragments',
+        'num_query_params', 'num_directories', 'port', 'is_risky_port', 'protocol_mismatch',
+        'is_unknown_port', 'contains_hex_encoding', 'starts_with_https_but_contains_http',
+        'missing_hostname_flag'
+    ]
+    dns_feature_names = [
+        'domain', 'has_A', 'num_A', 'has_AAAA', 'num_AAAA', 'has_MX', 'num_MX',
+        'has_NS', 'num_NS', 'has_TXT', 'num_TXT', 'has_CNAME', 'cname_chain_length',
+        'has_SOA', 'ttl_min', 'ttl_max', 'ttl_mean', 'ttl_var', 'mx_priority_min',
+        'mx_priority_max', 'num_distinct_ips', 'txt_entropy', 'has_SPF', 'has_DKIM',
+        'has_DMARC', 'has_wildcard_dns', 'dnssec_enabled', 'asn_list', 'asn_org_list',
+        'asn_country_list', 'cidr_list', 'error_type'
+    ]
+    whois_feature_names = [
+        'registrar', 'whois_server', 'creation_date', 'expiration_date', 'updated_date',
+        'domain_age_days', 'registration_length_days', 'status', 'registrant_country',
+        'has_privacy_protection', 'whois_success', 'error_msg'
+    ]
+
+    # Use fallbacks for any missing feature types
+    if 'url' not in feature_cols:
+        feature_cols['url'] = [c for c in url_feature_names if c in df.columns]
+    if 'dns' not in feature_cols:
+        feature_cols['dns'] = [c for c in dns_feature_names if c in df.columns]
+    if 'whois' not in feature_cols:
+        feature_cols['whois'] = [c for c in whois_feature_names if c in df.columns]
+
+    logger.info(f"Feature counts: URL={len(feature_cols['url'])}, DNS={len(feature_cols['dns'])}, WHOIS={len(feature_cols['whois'])}")
+
+    # Limit to test_size samples
+    n_samples = min(len(df), test_size)
+    logger.info(f"Using {n_samples} samples for evaluation")
+
     test_features = []
     test_labels = []
 
-    # Get feature columns (everything except label columns)
-    url_feature_cols = [c for c in url_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
-    dns_feature_cols = [c for c in dns_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
-    whois_feature_cols = [c for c in whois_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
-
-    logger.info(f"Feature counts: URL={len(url_feature_cols)}, DNS={len(dns_feature_cols)}, WHOIS={len(whois_feature_cols)}")
-
-    if len(dns_feature_cols) == 0:
-        logger.warning("⚠️ No DNS features found! Check if DNS features have correct column names.")
-    if len(whois_feature_cols) == 0:
-        logger.warning("⚠️ No WHOIS features found! Check if WHOIS features have correct column names.")
-
-    # Limit to test_size samples
-    n_samples = min(len(url_df), test_size)
-    logger.info(f"Using {n_samples} samples for evaluation")
-
     for idx in range(n_samples):
-        # Get label
-        label = int(url_df.iloc[idx][label_col])
+        row = df.iloc[idx]
+        label = int(row[label_col])
 
-        # Get URL features
-        url_feats = url_df.iloc[idx][url_feature_cols].values.reshape(1, -1).astype(float)
-
-        # Get DNS features (same index, assumes aligned data)
-        if idx < len(dns_df):
-            dns_feats = dns_df.iloc[idx][dns_feature_cols].values.reshape(1, -1).astype(float)
-        else:
-            dns_feats = np.zeros((1, len(dns_feature_cols)))
-
-        # Get WHOIS features (same index, assumes aligned data)
-        if idx < len(whois_df):
-            whois_feats = whois_df.iloc[idx][whois_feature_cols].values.reshape(1, -1).astype(float)
-        else:
-            whois_feats = np.zeros((1, len(whois_feature_cols)))
+        # Get features for each type, filling missing with 0
+        url_feats = row[feature_cols['url']].fillna(0).values.reshape(1, -1).astype(float)
+        dns_feats = row[feature_cols['dns']].fillna(0).values.reshape(1, -1).astype(float)
+        whois_feats = row[feature_cols['whois']].fillna(0).values.reshape(1, -1).astype(float)
 
         test_features.append({
             "url": url_feats,
