@@ -114,6 +114,56 @@
             background: #5568d3;
         }
 
+        .feedback-section {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .feedback-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .feedback-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .feedback-btn {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            color: #333;
+        }
+
+        .feedback-btn:hover {
+            border-color: #667eea;
+            background: white;
+        }
+
+        .feedback-btn.selected {
+            border-color: #667eea;
+            background: #f0f3ff;
+        }
+
+        .feedback-submitted {
+            text-align: center;
+            color: #28a745;
+            font-size: 13px;
+            padding: 10px;
+        }
+
         .error {
             background: #f8d7da;
             color: #721c24;
@@ -168,7 +218,7 @@
     </div>
 
     <div class="footer">
-        Powered by PhishNet ML Engine v1.0
+        Powered by PhishNet ML Engine v4.0
     </div>
 
     <script src="popup.js"></script>
