@@ -298,18 +298,25 @@ jobs:
           df = pd.read_csv('data/processed/phishing_features_complete.csv')
           print(f"📊 Loaded {len(df)} rows from S3")
 
-          # Drop rows with missing labels
+          # Normalize labels - handle mixed string/numeric formats
           if 'label' in df.columns:
+              # Convert to string first for consistent mapping
+              df['label'] = df['label'].astype(str).str.strip().str.lower()
+
+              # Map all variations to 0/1
+              label_map = {
+                  'phishing': 1, '1': 1, '1.0': 1,
+                  'legitimate': 0, '0': 0, '0.0': 0
+              }
+              df['label'] = df['label'].map(label_map)
+
+              # Drop any rows that couldn't be mapped
               before = len(df)
               df = df.dropna(subset=['label'])
               dropped = before - len(df)
               if dropped > 0:
-                  print(f"⚠️  Dropped {dropped} rows with missing labels")
+                  print(f"⚠️  Dropped {dropped} rows with invalid labels")
 
-              # If labels are strings, map them
-              if df['label'].dtype == 'object':
-                  df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
-              # Ensure labels are integers (handles float like 0.0, 1.0)
               df['label'] = df['label'].astype(int)
 
           df.to_csv('data/processed/phishing_features_complete.csv', index=False)
