@@ -65,7 +65,7 @@ ENSEMBLE_CONFIGS = {
         "description": "Fast with network signals",
         "models": {
             "url": "url_catboost.pkl",
-            "dns": "dns_lgbm.pkl"  # LightGBM fastest for DNS
+            "dns": "dns_lightgbm.pkl"  # LightGBM fastest for DNS
         },
         "weights": {
             "url": 0.70,
@@ -131,8 +131,8 @@ ENSEMBLE_CONFIGS = {
         "description": "Best accuracy - optimized weights via grid search",
         "models": {
             "url": "url_catboost.pkl",
-            "dns": "dns_xgb.pkl",
-            "whois": "whois_lgbm.pkl"
+            "dns": "dns_xgboost.pkl",
+            "whois": "whois_lightgbm.pkl"
         },
         "weights": {
             "url": 0.50,
@@ -148,9 +148,9 @@ ENSEMBLE_CONFIGS = {
         "name": "All 3 Speed-Optimized",
         "description": "Lowest latency - lightweight models",
         "models": {
-            "url": "url_lgbm.pkl",
-            "dns": "dns_lgbm.pkl",
-            "whois": "whois_lgbm.pkl"
+            "url": "url_lightgbm.pkl",
+            "dns": "dns_lightgbm.pkl",
+            "whois": "whois_lightgbm.pkl"
         },
         "weights": {
             "url": 0.50,
@@ -220,8 +220,29 @@ class EnsemblePredictor:
             if weight == 0:
                 continue
 
+            # Prepare features - some models (CatBoost, LightGBM) require matching feature names
+            feat_data = features[feature_type]
+
+            # Convert to DataFrame with model's expected feature names if available
+            try:
+                if hasattr(model, 'feature_names_'):
+                    # CatBoost
+                    feature_names = model.feature_names_
+                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
+                elif hasattr(model, 'feature_name_'):
+                    # LightGBM
+                    feature_names = model.feature_name_
+                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
+                elif hasattr(model, 'feature_names_in_'):
+                    # sklearn models
+                    feature_names = model.feature_names_in_
+                    feat_data = pd.DataFrame(feat_data, columns=feature_names)
+            except Exception as e:
+                # If feature names don't match, just use raw array
+                logger.debug(f"Could not align features for {feature_type}: {e}")
+
             # Get prediction probabilities [legit_prob, phish_prob]
-            proba = model.predict_proba(features[feature_type])
+            proba = model.predict_proba(feat_data)
 
             if len(proba.shape) == 1:
                 # Binary output
@@ -349,58 +370,76 @@ def load_test_data(test_size: int = 1000) -> Tuple[List[Dict], List[int]]:
     """
     Load test data for all feature types.
 
-    Uses data/test/ directory which contains held-out test set.
+    Looks for data in data/test/ first, then falls back to data/processed/.
 
     Returns:
         (test_features, test_labels)
     """
-    logger.info("Loading test data from data/test/ (held-out test set)...")
+    # Determine which directory has the data
+    test_dir = Path("data/test")
+    processed_dir = Path("data/processed")
 
-    # Load URL features from TEST directory
-    url_df = pd.read_csv("data/test/url_features_modelready_imputed.csv")
-    url_df = url_df[url_df['label'].isin([0, 1])]  # Filter valid labels
-    logger.info(f"Loaded {len(url_df)} test URLs from held-out test set")
+    if (test_dir / "url_features_modelready_imputed.csv").exists():
+        data_dir = test_dir
+        logger.info("Loading test data from data/test/ (held-out test set)...")
+    elif (processed_dir / "url_features_modelready_imputed.csv").exists():
+        data_dir = processed_dir
+        logger.info("Loading test data from data/processed/ (training data)...")
+    else:
+        raise FileNotFoundError("No model-ready data found in data/test/ or data/processed/")
 
-    # Load DNS features from TEST directory
-    dns_df = pd.read_csv("data/test/dns_features_modelready_imputed.csv")
+    # Load URL features
+    url_df = pd.read_csv(data_dir / "url_features_modelready_imputed.csv")
+    # Check for label column - could be 'label' or 'label_encoded'
+    label_col = 'label_encoded' if 'label_encoded' in url_df.columns else 'label'
+    url_df = url_df[url_df[label_col].isin([0, 1])]  # Filter valid labels
+    logger.info(f"Loaded {len(url_df)} test URLs")
 
-    # Load WHOIS features from TEST directory
-    whois_df = pd.read_csv("data/test/whois_features_modelready_imputed.csv")
+    # Load DNS features
+    dns_df = pd.read_csv(data_dir / "dns_features_modelready_imputed.csv")
 
-    # Encode categorical columns to numeric
+    # Load WHOIS features
+    whois_df = pd.read_csv(data_dir / "whois_features_modelready_imputed.csv")
+
+    # Encode categorical columns to numeric (if any remain)
     for df in [url_df, dns_df, whois_df]:
         obj_cols = df.select_dtypes(include=["object"]).columns
         for col in obj_cols:
-            if col not in ['url']:  # Don't encode URL column
+            if col not in ['url']:  # Don't encode URL column if present
                 df[col] = df[col].astype(str).fillna("MISSING")
                 df[col], _ = pd.factorize(df[col])
 
-    # Merge on URL
+    # Prepare feature arrays (model-ready files have features + label_encoded only)
     test_features = []
     test_labels = []
 
-    for idx, url_row in url_df.iterrows():
-        url_val = url_row['url']
-        label = int(url_row['label'])
+    # Get feature columns (everything except label columns)
+    url_feature_cols = [c for c in url_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
+    dns_feature_cols = [c for c in dns_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
+    whois_feature_cols = [c for c in whois_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
 
-        # Get URL features (exclude url, label, and bucket columns)
-        url_feats = url_row.drop(['url', 'label', 'bucket'], errors='ignore').values.reshape(1, -1)
+    # Limit to test_size samples
+    n_samples = min(len(url_df), test_size)
+    logger.info(f"Using {n_samples} samples for evaluation")
 
-        # Get DNS features (match by URL)
-        dns_row = dns_df[dns_df['url'] == url_val]
-        if not dns_row.empty:
-            dns_feats = dns_row.drop(['url', 'label', 'bucket'], axis=1, errors='ignore').values[:1]
+    for idx in range(n_samples):
+        # Get label
+        label = int(url_df.iloc[idx][label_col])
+
+        # Get URL features
+        url_feats = url_df.iloc[idx][url_feature_cols].values.reshape(1, -1).astype(float)
+
+        # Get DNS features (same index, assumes aligned data)
+        if idx < len(dns_df):
+            dns_feats = dns_df.iloc[idx][dns_feature_cols].values.reshape(1, -1).astype(float)
         else:
-            # Use zeros if DNS features missing
-            dns_feats = np.zeros((1, len(dns_df.columns) - 3))
+            dns_feats = np.zeros((1, len(dns_feature_cols)))
 
-        # Get WHOIS features (match by URL)
-        whois_row = whois_df[whois_df['url'] == url_val]
-        if not whois_row.empty:
-            whois_feats = whois_row.drop(['url', 'label', 'bucket'], axis=1, errors='ignore').values[:1]
+        # Get WHOIS features (same index, assumes aligned data)
+        if idx < len(whois_df):
+            whois_feats = whois_df.iloc[idx][whois_feature_cols].values.reshape(1, -1).astype(float)
         else:
-            # Use zeros if WHOIS features missing
-            whois_feats = np.zeros((1, len(whois_df.columns) - 3))
+            whois_feats = np.zeros((1, len(whois_feature_cols)))
 
         test_features.append({
             "url": url_feats,
