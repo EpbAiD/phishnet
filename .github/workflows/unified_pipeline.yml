@@ -229,7 +229,7 @@ jobs:
           script: |
             cd /home/ec2-user/phishnet
             aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
-            python3 scripts/extract_vm_features_aws.py ${{ env.batch_date }}
+            python3.8 scripts/extract_vm_features_aws.py ${{ env.batch_date }}
             echo "✅ EC2 processing complete - master dataset updated in S3"
 
       - name: Stop EC2 instance
