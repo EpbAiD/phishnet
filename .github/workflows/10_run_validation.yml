@@ -187,15 +187,14 @@ jobs:
             echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
             ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ec2-user@$EC2_IP << EOFEC2
               cd /home/ec2-user/phishnet
-              aws s3 cp s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv batch.csv
-              aws s3 cp s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv url_features.csv
-              aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py extract_vm_features_aws.py
-              aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv master.csv || echo "url,label" > master.csv
 
-              python3 extract_vm_features_aws.py batch.csv url_features.csv master.csv --mode batch
+              # Update the extraction script from S3
+              aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
 
-              aws s3 cp master.csv s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv
-              echo "✅ Updated master dataset"
+              # Run feature extraction with batch date (this downloads, extracts, merges, and uploads to S3)
+              python3.8 scripts/extract_vm_features_aws.py ${BATCH_DATE}
+
+              echo "✅ EC2 processing complete!"
           EOFEC2
 
             echo ""
