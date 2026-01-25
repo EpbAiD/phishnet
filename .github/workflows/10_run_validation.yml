@@ -213,13 +213,13 @@ jobs:
             echo "   Master now has $AFTER_COUNT URLs (+$NEW_ADDED new)"
 
             echo ""
-            echo "🏋️ Step 8: Preparing model-ready datasets..."
+            echo "🏋️ Step 8: Preparing SEPARATE model-ready datasets (URL, DNS, WHOIS)..."
             python3 << 'EOFPY'
           import pandas as pd
           import numpy as np
 
           df = pd.read_csv('data/processed/phishing_features_complete.csv')
-          print(f"Loaded {len(df)} rows")
+          print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
 
           # Encode labels
           if 'label' in df.columns:
@@ -232,11 +232,10 @@ jobs:
               if df[col].dtype == 'object' and col not in ['url', 'label']:
                   df[col] = df[col].fillna('MISSING')
                   df[col], _ = pd.factorize(df[col])
-                  print(f"  Encoded {col} -> numeric")
 
-          # Define feature groups based on actual column names in the dataset
-          # URL features: URL structure analysis
-          url_feature_names = [
+          # Define SEPARATE feature groups from ORIGINAL extractors
+          # URL features (39) - from url_features.py
+          url_features = [
               'url_length', 'hostname_length', 'path_length', 'num_subdomains', 'num_dots',
               'num_special_chars', 'num_digits', 'num_uppercase_chars', 'has_at_symbol',
               'has_double_slash_redirect', 'has_dash_in_domain', 'is_ip_address', 'ip_category',
@@ -249,47 +248,42 @@ jobs:
               'missing_hostname_flag'
           ]
 
-          # DNS features: DNS record analysis
-          dns_feature_names = [
-              'has_A', 'num_A', 'has_AAAA', 'num_AAAA', 'has_MX', 'num_MX', 'has_NS', 'num_NS',
-              'has_TXT', 'num_TXT', 'has_CNAME', 'cname_chain_length', 'has_SOA', 'ttl_min',
-              'ttl_max', 'ttl_mean', 'ttl_var', 'mx_priority_min', 'mx_priority_max',
-              'num_distinct_ips', 'txt_entropy', 'has_SPF', 'has_DKIM', 'has_DMARC',
-              'has_wildcard_dns', 'dnssec_enabled'
+          # DNS features (31) - from dns_ipwhois.py
+          dns_features = [
+              'domain', 'has_A', 'num_A', 'has_AAAA', 'num_AAAA', 'has_MX', 'num_MX',
+              'has_NS', 'num_NS', 'has_TXT', 'num_TXT', 'has_CNAME', 'cname_chain_length',
+              'has_SOA', 'ttl_min', 'ttl_max', 'ttl_mean', 'ttl_var', 'mx_priority_min',
+              'mx_priority_max', 'num_distinct_ips', 'txt_entropy', 'has_SPF', 'has_DKIM',
+              'has_DMARC', 'has_wildcard_dns', 'dnssec_enabled', 'asn_list', 'asn_org_list',
+              'asn_country_list', 'cidr_list', 'error_type'
           ]
 
-          # WHOIS features: Domain registration analysis
-          whois_feature_names = [
-              'domain_age_days', 'registration_length_days', 'has_privacy_protection',
-              'whois_success'
+          # WHOIS features (12) - from whois.py
+          whois_features = [
+              'registrar', 'whois_server', 'creation_date', 'expiration_date', 'updated_date',
+              'domain_age_days', 'registration_length_days', 'status', 'registrant_country',
+              'has_privacy_protection', 'whois_success', 'error_msg'
           ]
 
-          # Filter to only include columns that exist in the dataset
-          url_features = [c for c in url_feature_names if c in df.columns]
-          dns_features = [c for c in dns_feature_names if c in df.columns]
-          whois_features = [c for c in whois_feature_names if c in df.columns]
+          # Filter to columns that exist
+          url_cols = [c for c in url_features if c in df.columns]
+          dns_cols = [c for c in dns_features if c in df.columns]
+          whois_cols = [c for c in whois_features if c in df.columns]
 
-          print(f"Features: URL={len(url_features)}, DNS={len(dns_features)}, WHOIS={len(whois_features)}")
+          print(f"Features found: URL={len(url_cols)}, DNS={len(dns_cols)}, WHOIS={len(whois_cols)}")
 
-          for name, features in [('url', url_features), ('dns', dns_features), ('whois', whois_features)]:
-              if not features:
-                  print(f"  ⚠️ No {name.upper()} features found - skipping")
-                  # Create empty file with just label column for consistency
-                  pd.DataFrame({'label_encoded': df['label_encoded']}).to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+          # Create SEPARATE model-ready files for each feature type
+          for name, cols in [('url', url_cols), ('dns', dns_cols), ('whois', whois_cols)]:
+              if not cols:
+                  print(f"  WARNING: No {name.upper()} features found")
                   continue
-              cols = features + ['label_encoded']
-              df_subset = df[cols].copy()
-              df_imputed = df_subset.fillna(0)
-              # Ensure all columns are numeric
-              for c in df_imputed.columns:
-                  if df_imputed[c].dtype == 'object':
-                      df_imputed[c], _ = pd.factorize(df_imputed[c].fillna('MISSING'))
-              df_imputed.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
-              print(f"  Saved {name}_features_modelready_imputed.csv with {len(features)} features")
+              df_subset = df[cols + ['label_encoded']].copy().fillna(0)
+              df_subset.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+              print(f"  Saved {name}_features_modelready_imputed.csv with {len(cols)} features")
           EOFPY
 
             echo ""
-            echo "🏋️ Step 9: Training 45 models..."
+            echo "🏋️ Step 9: Training 45 models (15 per feature type)..."
             mkdir -p models
             python3 << 'EOFPY'
           import pandas as pd
@@ -330,11 +324,23 @@ jobs:
 
           results = {'url': {}, 'dns': {}, 'whois': {}}
 
+          # Train SEPARATE models for each feature type
           for feature_type in ['url', 'dns', 'whois']:
+              print(f"\n{'='*60}")
               print(f"Training {feature_type.upper()} models...")
-              df = pd.read_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv')
+              print(f"{'='*60}")
+
+              try:
+                  df = pd.read_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv')
+              except FileNotFoundError:
+                  print(f"  Skipping {feature_type} - no data file")
+                  continue
+
               X = df.drop('label_encoded', axis=1)
               y = df['label_encoded']
+              feature_cols = list(X.columns)
+
+              print(f"  {len(X)} samples, {len(feature_cols)} features")
 
               if len(y.unique()) < 2:
                   print(f"  Skipping {feature_type} - only one class")
@@ -348,17 +354,20 @@ jobs:
                       accuracy = model.score(X_test, y_test)
                       results[feature_type][name] = accuracy
                       joblib.dump(model, f'models/{feature_type}_{name}.pkl')
+                      joblib.dump(feature_cols, f'models/{feature_type}_{name}_feature_cols.pkl')
+                      print(f"    {name}: {accuracy:.4f}")
                   except Exception as e:
-                      print(f"  {name}: {e}")
+                      print(f"    {name}: FAILED - {e}")
 
           with open('models/training_results.json', 'w') as f:
               json.dump(results, f, indent=2)
 
-          print("\nBest models:")
-          for feature_type in ['url', 'dns', 'whois']:
-              if results[feature_type]:
-                  best = max(results[feature_type].items(), key=lambda x: x[1])
-                  print(f"  {feature_type.upper()}: {best[0]} ({best[1]:.4f})")
+          print(f"\n{'='*60}")
+          print("Best models per feature type:")
+          for ft in ['url', 'dns', 'whois']:
+              if results[ft]:
+                  best = max(results[ft].items(), key=lambda x: x[1])
+                  print(f"  {ft.upper()}: {best[0]} ({best[1]:.4f})")
           EOFPY
 
             echo ""
