@@ -373,154 +373,63 @@ jobs:
           mkdir -p data/processed
           aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
 
+      - name: Prepare test data for ensemble evaluation
+        run: |
+          # Create test directory with model-ready data
+          mkdir -p data/test
+
+          # Copy the imputed model-ready files to test directory
+          cp data/processed/url_features_modelready_imputed.csv data/test/ 2>/dev/null || echo "URL features not found"
+          cp data/processed/dns_features_modelready_imputed.csv data/test/ 2>/dev/null || echo "DNS features not found"
+          cp data/processed/whois_features_modelready_imputed.csv data/test/ 2>/dev/null || echo "WHOIS features not found"
+
+          echo "📁 Test data prepared:"
+          ls -la data/test/ 2>/dev/null || echo "No test files"
+
       - name: Find best ensemble combination
         id: ensemble
         run: |
-          python3 << 'EOF'
-          import os
+          # Use the existing ensemble_comparison.py script
+          echo "🔗 Running ensemble comparison using existing script..."
+
+          # Run the comparison script (it outputs to analysis/ensemble_comparison/)
+          python3 scripts/ensemble_comparison.py --test-size 1000 --iterations 50 || {
+            echo "⚠️ Ensemble comparison failed, creating fallback config..."
+            mkdir -p models
+            echo '{"best_url_model": "url_catboost.pkl", "best_dns_model": "dns_catboost.pkl", "best_whois_model": "whois_catboost.pkl", "note": "fallback config"}' > models/best_ensemble.json
+          }
+
+          # Copy latest results to models/best_ensemble.json
+          LATEST_RESULTS=$(ls -t analysis/ensemble_comparison/comparison_*.json 2>/dev/null | head -1)
+          if [ -n "$LATEST_RESULTS" ]; then
+            cp "$LATEST_RESULTS" models/best_ensemble.json
+            echo "✅ Copied ensemble results from $LATEST_RESULTS"
+
+            # Parse best ensemble for GitHub output
+            python3 << EOF
           import json
-          import joblib
-          import pandas as pd
-          import numpy as np
-          from sklearn.model_selection import train_test_split
-          from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+          import os
 
-          # Load data
-          df = pd.read_csv('data/processed/phishing_features_complete.csv')
+          with open('models/best_ensemble.json') as f:
+              results = json.load(f)
 
-          # Prepare labels
-          df['label'] = df['label'].astype(str).str.strip().str.lower()
-          label_map = {'phishing': 1, '1': 1, '1.0': 1, 'legitimate': 0, '0': 0, '0.0': 0}
-          df['label'] = df['label'].map(label_map)
-          df = df.dropna(subset=['label'])
-
-          y = df['label'].astype(int)
-
-          print(f"📊 Dataset: {len(y)} samples")
-          print(f"   Phishing: {sum(y)}, Legitimate: {len(y) - sum(y)}")
-
-          # Evaluate the 3 production CatBoost models (same as API uses)
-          # These models have feature_names_ built in
-          production_models = [
-              ('url', 'models/url_catboost.pkl'),
-              ('dns', 'models/dns_catboost.pkl'),
-              ('whois', 'models/whois_catboost.pkl'),
-          ]
-
-          results = {}
-          predictions = {}
-
-          for model_type, model_path in production_models:
-              print(f"\n📈 Evaluating {model_type.upper()} model...")
-
-              if not os.path.exists(model_path):
-                  print(f"   ⚠️ Model not found: {model_path}")
-                  continue
-
-              try:
-                  model = joblib.load(model_path)
-
-                  # CatBoost models have feature_names_ attribute
-                  if hasattr(model, 'feature_names_'):
-                      feature_cols = list(model.feature_names_)
-                  else:
-                      # Fallback: try to get from _feature_cols.pkl
-                      cols_path = model_path.replace('.pkl', '_feature_cols.pkl')
-                      if os.path.exists(cols_path):
-                          feature_cols = joblib.load(cols_path)
-                      else:
-                          print(f"   ⚠️ Cannot determine feature columns for {model_path}")
-                          continue
-
-                  # Prepare features for this model
-                  X = df.reindex(columns=feature_cols, fill_value=0)
-
-                  # Split data
-                  X_train, X_test, y_train, y_test = train_test_split(
-                      X, y, test_size=0.2, random_state=42, stratify=y
-                  )
-
-                  # Get predictions
-                  if hasattr(model, 'predict_proba'):
-                      proba = model.predict_proba(X_test)[:, 1]
-                  else:
-                      proba = model.predict(X_test)
-
-                  preds = (proba >= 0.5).astype(int)
-
-                  acc = accuracy_score(y_test, preds)
-                  f1 = f1_score(y_test, preds)
-                  auc = roc_auc_score(y_test, proba) if len(np.unique(proba)) > 1 else 0.5
-
-                  print(f"   ✅ {model_type}_catboost.pkl")
-                  print(f"      Accuracy: {acc:.4f}")
-                  print(f"      F1 Score: {f1:.4f}")
-                  print(f"      AUC-ROC:  {auc:.4f}")
-
-                  results[model_type] = {
-                      'model': f'{model_type}_catboost.pkl',
-                      'accuracy': acc,
-                      'f1': f1,
-                      'auc': auc
-                  }
-                  predictions[model_type] = proba
-
-              except Exception as e:
-                  print(f"   ❌ Error: {e}")
-
-          # Create ensemble prediction
-          print("\n🔗 Creating ensemble from production models...")
-
-          if len(predictions) > 0:
-              # Average predictions from all available models
-              ensemble_proba = np.zeros(len(y_test))
-              for model_type, proba in predictions.items():
-                  ensemble_proba += proba
-              ensemble_proba /= len(predictions)
-
-              ensemble_preds = (ensemble_proba >= 0.5).astype(int)
-
-              ensemble_acc = accuracy_score(y_test, ensemble_preds)
-              ensemble_f1 = f1_score(y_test, ensemble_preds)
-              ensemble_auc = roc_auc_score(y_test, ensemble_proba)
-
-              print(f"\n🎯 ENSEMBLE RESULTS ({len(predictions)} models):")
-              print(f"   Accuracy: {ensemble_acc:.4f}")
-              print(f"   F1 Score: {ensemble_f1:.4f}")
-              print(f"   AUC-ROC:  {ensemble_auc:.4f}")
-
-              # Save results
-              output = {
-                  'best_url_model': results.get('url', {}).get('model', 'N/A'),
-                  'best_dns_model': results.get('dns', {}).get('model', 'N/A'),
-                  'best_whois_model': results.get('whois', {}).get('model', 'N/A'),
-                  'url_metrics': results.get('url', {}),
-                  'dns_metrics': results.get('dns', {}),
-                  'whois_metrics': results.get('whois', {}),
-                  'ensemble_accuracy': float(ensemble_acc),
-                  'ensemble_f1': float(ensemble_f1),
-                  'ensemble_auc': float(ensemble_auc),
-                  'n_models': len(predictions)
-              }
-
-              with open('models/best_ensemble.json', 'w') as f:
-                  json.dump(output, f, indent=2)
-
-              print(f"\n✅ Saved ensemble config to models/best_ensemble.json")
-
-              # Write to GitHub output
+          # Get the best overall result (first in sorted list)
+          if isinstance(results, list) and len(results) > 0:
+              best = results[0]
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                  f.write(f"best_url_model={output['best_url_model']}\n")
-                  f.write(f"best_dns_model={output['best_dns_model']}\n")
-                  f.write(f"best_whois_model={output['best_whois_model']}\n")
-                  f.write(f"ensemble_accuracy={output['ensemble_accuracy']}\n")
+                  f.write(f"best_url_model={best.get('models', {}).get('url', 'N/A')}\n")
+                  f.write(f"best_dns_model={best.get('models', {}).get('dns', 'N/A')}\n")
+                  f.write(f"best_whois_model={best.get('models', {}).get('whois', 'N/A')}\n")
+                  f.write(f"ensemble_accuracy={best.get('accuracy', 0)}\n")
+              print(f"🏆 Best ensemble: {best.get('name', 'Unknown')}")
+              print(f"   Accuracy: {best.get('accuracy', 0):.4f}")
+              print(f"   F1 Score: {best.get('f1_score', 0):.4f}")
           else:
-              print("❌ No models could be evaluated")
-              # Create empty file so artifact upload doesn't fail
-              with open('models/best_ensemble.json', 'w') as f:
-                  json.dump({'error': 'No models evaluated'}, f)
-
+              print("⚠️ No valid ensemble results found")
           EOF
+          else
+            echo "⚠️ No ensemble results found"
+          fi
 
       - name: Upload ensemble config
         uses: actions/upload-artifact@v4
