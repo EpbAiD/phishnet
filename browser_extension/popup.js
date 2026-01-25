@@ -1,5 +1,10 @@
 const API_BASE = 'http://localhost:8000';
 
+// Track current scan for feedback
+let currentScanId = null;
+let currentPrediction = null;
+let currentUrl = null;
+
 // Get current tab URL and check it
 async function checkCurrentPage() {
     const resultDiv = document.getElementById('result');
@@ -16,6 +21,7 @@ async function checkCurrentPage() {
         // Get current tab URL
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         const url = tab.url;
+        currentUrl = url;
 
         // Skip chrome:// and extension URLs
         if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
@@ -52,6 +58,11 @@ async function checkCurrentPage() {
         }
 
         const data = await response.json();
+        currentPrediction = data.is_phishing ? 1 : 0;
+
+        // Record scan in database
+        await recordScan(url, data);
+
         displayResult(data, url);
 
     } catch (error) {
@@ -63,6 +74,35 @@ async function checkCurrentPage() {
             </div>
             <button onclick="checkCurrentPage()">Retry</button>
         `;
+    }
+}
+
+// Record scan in database for feedback tracking
+async function recordScan(url, predictionData) {
+    try {
+        const response = await fetch(`${API_BASE}/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: url,
+                prediction: predictionData.is_phishing ? 1 : 0,
+                confidence: predictionData.risk_score,
+                url_model_score: predictionData.risk_score,
+                dns_model_score: null,
+                whois_model_score: null,
+                explanation: null,
+                model_version: predictionData.model_name,
+                source: 'browser_extension'
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            currentScanId = data.id;
+        }
+    } catch (error) {
+        console.error('Failed to record scan:', error);
+        // Non-critical, continue without scan ID
     }
 }
 
@@ -134,6 +174,17 @@ function displayResult(data, url) {
                 <span>${(data.threshold * 100).toFixed(0)}%</span>
             </div>
         </div>
+
+        <!-- Feedback Section -->
+        <div class="feedback-section" id="feedback-section">
+            <div class="feedback-title">Was this prediction correct?</div>
+            <div class="feedback-buttons">
+                <button class="feedback-btn" id="feedback-correct">✓ Correct</button>
+                <button class="feedback-btn" id="feedback-safe">Actually Safe</button>
+                <button class="feedback-btn" id="feedback-phishing">Actually Phishing</button>
+            </div>
+        </div>
+
         <button id="explain-btn">🤖 Why? (AI Explanation)</button>
         <button id="recheck-btn">🔄 Re-check</button>
     `;
@@ -141,6 +192,66 @@ function displayResult(data, url) {
     // Attach event listeners (CSP compliant)
     document.getElementById('explain-btn').addEventListener('click', () => showExplanation(url));
     document.getElementById('recheck-btn').addEventListener('click', checkCurrentPage);
+
+    // Feedback button listeners
+    document.getElementById('feedback-correct').addEventListener('click', () => submitFeedback('correct'));
+    document.getElementById('feedback-safe').addEventListener('click', () => submitFeedback('safe'));
+    document.getElementById('feedback-phishing').addEventListener('click', () => submitFeedback('phishing'));
+}
+
+// Submit feedback to API
+async function submitFeedback(feedbackType) {
+    if (!currentScanId) {
+        console.error('No scan ID available for feedback');
+        showFeedbackMessage('Unable to submit feedback - please try again');
+        return;
+    }
+
+    let correctLabel = null;
+
+    if (feedbackType === 'correct') {
+        // User confirms prediction is correct - no correction needed
+        correctLabel = null;
+    } else if (feedbackType === 'safe') {
+        // User says it's actually safe (legitimate)
+        correctLabel = 0;
+    } else if (feedbackType === 'phishing') {
+        // User says it's actually phishing
+        correctLabel = 1;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scan_id: currentScanId,
+                correct_label: correctLabel,
+                explanation_helpful: null,
+                explanation_comment: null,
+                source: 'browser_extension'
+            })
+        });
+
+        if (response.ok) {
+            showFeedbackMessage('Thank you for your feedback!');
+        } else {
+            showFeedbackMessage('Failed to submit feedback');
+        }
+    } catch (error) {
+        console.error('Failed to submit feedback:', error);
+        showFeedbackMessage('Failed to submit feedback');
+    }
+}
+
+// Show feedback submitted message
+function showFeedbackMessage(message) {
+    const feedbackSection = document.getElementById('feedback-section');
+    if (feedbackSection) {
+        feedbackSection.innerHTML = `
+            <div class="feedback-submitted">${message}</div>
+        `;
+    }
 }
 
 async function showExplanation(url) {
@@ -167,6 +278,12 @@ async function showExplanation(url) {
         }
 
         const data = await response.json();
+
+        // Update scan with explanation if we have a scan ID
+        if (currentScanId) {
+            updateScanExplanation(data);
+        }
+
         displayExplanation(data, url);
 
     } catch (error) {
@@ -178,6 +295,25 @@ async function showExplanation(url) {
             <button id="back-btn">← Back to Results</button>
         `;
         document.getElementById('back-btn').addEventListener('click', checkCurrentPage);
+    }
+}
+
+// Update scan record with explanation and model scores
+async function updateScanExplanation(explanationData) {
+    // This is a fire-and-forget update, no need to block
+    try {
+        await fetch(`${API_BASE}/scan/${currentScanId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                explanation: explanationData.explanation,
+                url_model_score: explanationData.predictions?.url_prob,
+                whois_model_score: explanationData.predictions?.whois_prob,
+                dns_model_score: explanationData.predictions?.dns_prob
+            })
+        });
+    } catch (error) {
+        console.error('Failed to update scan with explanation:', error);
     }
 }
 
@@ -213,10 +349,64 @@ function displayExplanation(data, url) {
                 </div>
             </div>
         ` : ''}
+
+        <!-- Explanation Feedback -->
+        <div class="feedback-section" id="explanation-feedback-section">
+            <div class="feedback-title">Was this explanation helpful?</div>
+            <div class="feedback-buttons">
+                <button class="feedback-btn" id="explanation-helpful">👍 Helpful</button>
+                <button class="feedback-btn" id="explanation-not-helpful">👎 Not Helpful</button>
+            </div>
+        </div>
+
         <button id="back-btn">← Back to Results</button>
     `;
 
     document.getElementById('back-btn').addEventListener('click', checkCurrentPage);
+
+    // Explanation feedback listeners
+    document.getElementById('explanation-helpful').addEventListener('click', () => submitExplanationFeedback(true));
+    document.getElementById('explanation-not-helpful').addEventListener('click', () => submitExplanationFeedback(false));
+}
+
+// Submit explanation feedback
+async function submitExplanationFeedback(helpful) {
+    if (!currentScanId) {
+        showExplanationFeedbackMessage('Unable to submit feedback');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scan_id: currentScanId,
+                correct_label: null,
+                explanation_helpful: helpful,
+                explanation_comment: null,
+                source: 'browser_extension'
+            })
+        });
+
+        if (response.ok) {
+            showExplanationFeedbackMessage('Thank you for your feedback!');
+        } else {
+            showExplanationFeedbackMessage('Failed to submit feedback');
+        }
+    } catch (error) {
+        console.error('Failed to submit explanation feedback:', error);
+        showExplanationFeedbackMessage('Failed to submit feedback');
+    }
+}
+
+function showExplanationFeedbackMessage(message) {
+    const feedbackSection = document.getElementById('explanation-feedback-section');
+    if (feedbackSection) {
+        feedbackSection.innerHTML = `
+            <div class="feedback-submitted">${message}</div>
+        `;
+    }
 }
 
 // Check page when popup opens

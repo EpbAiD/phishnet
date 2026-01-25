@@ -5,14 +5,17 @@
 # - Normalizes incomplete URLs (e.g., "youtube.com" → "https://youtube.com")
 # - /health : simple health check
 # - /predict/url : takes URL, returns P(phishing) + label
+# - /feedback : submit user corrections for model improvement
 # ===============================================================
 import sys, os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
+from sqlalchemy.orm import Session
+from typing import List, Optional
 
 from src.api.schemas import (
     URLPredictRequest,
@@ -34,13 +37,23 @@ from src.api.predict_utils import (
 )
 from src.api.model_loader import load_url_model, load_whois_model, load_dns_model
 from src.api.llm_explainer import generate_explanation
+from src.api.database import (
+    get_db,
+    init_db,
+    Scan,
+    Feedback,
+    ScanCreate,
+    ScanResponse,
+    FeedbackCreate,
+    FeedbackResponse,
+)
 import time
 import numpy as np
 
 app = FastAPI(
     title="Phishing Detection API",
-    version="3.0.0",
-    description="Phishing risk scoring with URL, WHOIS, and DNS models. Ensemble combines all three.",
+    version="4.0.0",
+    description="Phishing risk scoring with URL, WHOIS, and DNS models. Includes feedback for model improvement.",
 )
 
 app.add_middleware(
@@ -489,3 +502,177 @@ def explain_prediction(request: ExplainRequest):
         latency_ms=total_latency_ms,
         shap_features=shap_features,
     )
+
+
+# ===============================================================
+# FEEDBACK ENDPOINTS - For Human-in-the-Loop Model Improvement
+# ===============================================================
+
+@app.post("/scan", response_model=ScanResponse)
+def create_scan(scan: ScanCreate, db: Session = Depends(get_db)):
+    """
+    Record a scan in the database.
+    Called automatically after predictions to enable feedback collection.
+    """
+    db_scan = Scan(
+        url=scan.url,
+        prediction=scan.prediction,
+        confidence=scan.confidence,
+        url_model_score=scan.url_model_score,
+        dns_model_score=scan.dns_model_score,
+        whois_model_score=scan.whois_model_score,
+        explanation=scan.explanation,
+        model_version=scan.model_version,
+        source=scan.source,
+    )
+    db.add(db_scan)
+    db.commit()
+    db.refresh(db_scan)
+    return db_scan
+
+
+@app.get("/scan/{scan_id}", response_model=ScanResponse)
+def get_scan(scan_id: int, db: Session = Depends(get_db)):
+    """Get a specific scan by ID."""
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return scan
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def submit_feedback(feedback: FeedbackCreate, db: Session = Depends(get_db)):
+    """
+    Submit user feedback for a scan.
+
+    Use cases:
+    - Correct a wrong prediction (set correct_label to 0 or 1)
+    - Rate explanation helpfulness (set explanation_helpful to true/false)
+    - Add a comment about the explanation
+
+    This feedback is used to improve the model in the next training cycle.
+    """
+    # Verify scan exists
+    scan = db.query(Scan).filter(Scan.id == feedback.scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    # Check if feedback already exists for this scan
+    existing = db.query(Feedback).filter(Feedback.scan_id == feedback.scan_id).first()
+    if existing:
+        # Update existing feedback
+        if feedback.correct_label is not None:
+            existing.correct_label = feedback.correct_label
+        if feedback.explanation_helpful is not None:
+            existing.explanation_helpful = feedback.explanation_helpful
+        if feedback.explanation_comment:
+            existing.explanation_comment = feedback.explanation_comment
+        existing.source = feedback.source
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    # Create new feedback
+    db_feedback = Feedback(
+        scan_id=feedback.scan_id,
+        correct_label=feedback.correct_label,
+        explanation_helpful=feedback.explanation_helpful,
+        explanation_comment=feedback.explanation_comment,
+        source=feedback.source,
+    )
+    db.add(db_feedback)
+    db.commit()
+    db.refresh(db_feedback)
+    return db_feedback
+
+
+@app.get("/feedback/corrections", response_model=List[dict])
+def get_corrections(
+    limit: int = 100,
+    since_days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """
+    Get user corrections for model retraining.
+
+    Returns scans where the user provided a different label than the model predicted.
+    Used by the training pipeline to incorporate human feedback.
+    """
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=since_days)
+
+    # Query scans with corrections
+    results = (
+        db.query(Scan, Feedback)
+        .join(Feedback, Scan.id == Feedback.scan_id)
+        .filter(Feedback.correct_label.isnot(None))
+        .filter(Feedback.submitted_at >= cutoff)
+        .order_by(Feedback.submitted_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    corrections = []
+    for scan, feedback in results:
+        if feedback.correct_label != scan.prediction:
+            corrections.append({
+                "url": scan.url,
+                "model_prediction": scan.prediction,
+                "correct_label": feedback.correct_label,
+                "confidence": scan.confidence,
+                "submitted_at": feedback.submitted_at.isoformat(),
+            })
+
+    return corrections
+
+
+@app.get("/feedback/stats")
+def get_feedback_stats(db: Session = Depends(get_db)):
+    """
+    Get feedback statistics for monitoring model performance.
+    """
+    from sqlalchemy import func
+
+    total_scans = db.query(func.count(Scan.id)).scalar()
+    total_feedback = db.query(func.count(Feedback.id)).scalar()
+
+    # Corrections (where user disagreed with model)
+    corrections = (
+        db.query(func.count(Feedback.id))
+        .join(Scan, Scan.id == Feedback.scan_id)
+        .filter(Feedback.correct_label.isnot(None))
+        .filter(Feedback.correct_label != Scan.prediction)
+        .scalar()
+    )
+
+    # Explanation feedback
+    helpful_count = (
+        db.query(func.count(Feedback.id))
+        .filter(Feedback.explanation_helpful == True)
+        .scalar()
+    )
+    unhelpful_count = (
+        db.query(func.count(Feedback.id))
+        .filter(Feedback.explanation_helpful == False)
+        .scalar()
+    )
+
+    return {
+        "total_scans": total_scans,
+        "total_feedback": total_feedback,
+        "corrections": corrections,
+        "correction_rate": corrections / total_feedback if total_feedback > 0 else 0,
+        "explanation_helpful": helpful_count,
+        "explanation_unhelpful": unhelpful_count,
+    }
+
+
+@app.on_event("startup")
+def startup_init_db():
+    """Initialize database tables on startup."""
+    try:
+        init_db()
+        print("✅ Database initialized")
+    except Exception as e:
+        print(f"⚠️ Database initialization failed (may not be available): {e}")

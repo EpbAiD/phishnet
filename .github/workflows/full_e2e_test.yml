@@ -1,0 +1,651 @@
+name: Full End-to-End Pipeline Test
+
+# Complete pipeline test:
+# 1. Collect 100 balanced URLs (50 phishing + 50 legitimate)
+# 2. Extract URL features locally, DNS/WHOIS features on EC2
+# 3. Append to master dataset in S3
+# 4. Train all 45 models (15 URL + 15 DNS + 15 WHOIS)
+# 5. Find best ensemble combination
+# 6. Test on a single unseen URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      num_urls:
+        description: 'Number of URLs to collect (will be balanced 50/50)'
+        required: false
+        default: '100'
+      test_url:
+        description: 'URL to test after training (leave empty for default)'
+        required: false
+        default: ''
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+
+jobs:
+  # ========================================================================
+  # STEP 1: Collect 100 Balanced URLs
+  # ========================================================================
+  collect-urls:
+    name: "Step 1: Collect Balanced URLs"
+    runs-on: ubuntu-latest
+    outputs:
+      batch_date: ${{ steps.batch.outputs.batch_date }}
+      batch_file: ${{ steps.batch.outputs.batch_file }}
+      phishing_count: ${{ steps.collect.outputs.phishing_count }}
+      legit_count: ${{ steps.collect.outputs.legit_count }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set batch info
+        id: batch
+        run: |
+          BATCH_DATE=$(date +%Y%m%d_%H%M%S)
+          BATCH_FILE="data/url_queue/batch_${BATCH_DATE}.csv"
+          mkdir -p data/url_queue
+
+          echo "batch_date=$BATCH_DATE" >> $GITHUB_OUTPUT
+          echo "batch_file=$BATCH_FILE" >> $GITHUB_OUTPUT
+          echo "📅 Batch: $BATCH_DATE"
+
+      - name: Collect balanced URLs
+        id: collect
+        run: |
+          NUM_URLS="${{ github.event.inputs.num_urls || '100' }}"
+          echo "🔗 Collecting $NUM_URLS balanced URLs..."
+
+          python3 scripts/fetch_urls.py ${{ steps.batch.outputs.batch_file }} $NUM_URLS
+
+          # Count URLs by type
+          PHISHING=$(grep -c ",phishing" ${{ steps.batch.outputs.batch_file }} || echo "0")
+          LEGIT=$(grep -c ",legitimate" ${{ steps.batch.outputs.batch_file }} || echo "0")
+          TOTAL=$(tail -n +2 ${{ steps.batch.outputs.batch_file }} | wc -l | tr -d ' ')
+
+          echo "phishing_count=$PHISHING" >> $GITHUB_OUTPUT
+          echo "legit_count=$LEGIT" >> $GITHUB_OUTPUT
+
+          echo "📊 Collection Results:"
+          echo "   Phishing: $PHISHING"
+          echo "   Legitimate: $LEGIT"
+          echo "   Total: $TOTAL"
+
+      - name: Upload batch as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: url-batch-${{ steps.batch.outputs.batch_date }}
+          path: ${{ steps.batch.outputs.batch_file }}
+          retention-days: 7
+
+  # ========================================================================
+  # STEP 2: Extract Features (URL locally, DNS/WHOIS on EC2)
+  # ========================================================================
+  extract-features:
+    name: "Step 2: Extract All Features"
+    runs-on: ubuntu-latest
+    needs: collect-urls
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download batch artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: url-batch-${{ needs.collect-urls.outputs.batch_date }}
+          path: data/url_queue/
+
+      - name: Extract URL features (locally)
+        run: |
+          BATCH_FILE="data/url_queue/batch_${{ needs.collect-urls.outputs.batch_date }}.csv"
+          URL_FEATURES="data/processed/url_features_${{ needs.collect-urls.outputs.batch_date }}.csv"
+
+          echo "🔍 Extracting URL features..."
+          python3 scripts/extract_url_features.py $BATCH_FILE $URL_FEATURES
+
+          ROWS=$(tail -n +2 $URL_FEATURES | wc -l | tr -d ' ')
+          echo "✅ Extracted URL features for $ROWS URLs"
+
+      - name: Upload to S3 for EC2 processing
+        run: |
+          BATCH_DATE="${{ needs.collect-urls.outputs.batch_date }}"
+
+          echo "📤 Uploading to S3..."
+          aws s3 cp data/url_queue/batch_${BATCH_DATE}.csv s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv
+          aws s3 cp data/processed/url_features_${BATCH_DATE}.csv s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv
+
+          # Upload latest VM script
+          aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
+
+      - name: Start EC2 instance
+        id: ec2
+        run: |
+          INSTANCE_STATE=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+
+          echo "EC2 state: $INSTANCE_STATE"
+
+          if [ "$INSTANCE_STATE" = "stopped" ]; then
+            echo "🚀 Starting EC2 instance..."
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            echo "⏳ Waiting for initialization..."
+            sleep 60
+          fi
+
+          EC2_IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+
+          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
+          echo "🖥️ EC2 IP: $EC2_IP"
+
+      - name: Extract DNS/WHOIS features on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 90m
+          script: |
+            cd /home/ec2-user/phishnet
+
+            # Update script from S3
+            aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
+
+            # Run feature extraction (includes DNS + WHOIS + accumulation to master)
+            python3.8 scripts/extract_vm_features_aws.py ${{ needs.collect-urls.outputs.batch_date }}
+
+            echo "✅ EC2 processing complete!"
+
+      - name: Stop EC2 instance
+        if: always()
+        run: |
+          echo "🛑 Stopping EC2 to save costs..."
+          aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+
+      - name: Download updated master from S3
+        run: |
+          mkdir -p data/processed
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
+
+          ROWS=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
+          echo "📊 Master dataset now has $ROWS total URLs"
+
+      - name: Upload master as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-dataset-${{ needs.collect-urls.outputs.batch_date }}
+          path: data/processed/phishing_features_complete.csv
+          retention-days: 7
+
+  # ========================================================================
+  # STEP 3: Train All 45 Models
+  # ========================================================================
+  train-models:
+    name: "Step 3: Train 45 Models"
+    runs-on: ubuntu-latest
+    needs: [collect-urls, extract-features]
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download master dataset from S3
+        run: |
+          mkdir -p data/processed
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
+
+      - name: Prepare model-ready datasets
+        run: |
+          python3 << 'EOF'
+          import pandas as pd
+          import numpy as np
+
+          df = pd.read_csv('data/processed/phishing_features_complete.csv')
+          print(f"📊 Loaded {len(df)} rows")
+
+          # Normalize labels
+          if 'label' in df.columns:
+              df['label'] = df['label'].astype(str).str.strip().str.lower()
+              label_map = {
+                  'phishing': 1, '1': 1, '1.0': 1,
+                  'legitimate': 0, '0': 0, '0.0': 0
+              }
+              df['label'] = df['label'].map(label_map)
+              df = df.dropna(subset=['label'])
+              df['label'] = df['label'].astype(int)
+
+          df.to_csv('data/processed/phishing_features_complete.csv', index=False)
+
+          # Create imputed version
+          df_imputed = df.copy()
+          non_feature_cols = ['url', 'label', 'source', 'bucket']
+          feature_cols = [col for col in df_imputed.columns if col not in non_feature_cols]
+
+          for col in feature_cols:
+              if df_imputed[col].dtype in ['float64', 'int64']:
+                  df_imputed[col].fillna(df_imputed[col].mean(), inplace=True)
+          df_imputed.fillna(0, inplace=True)
+          df_imputed.to_csv('data/processed/phishing_features_complete_imputed.csv', index=False)
+
+          print(f"✅ Prepared {len(df)} rows for training")
+          print(f"   Label distribution: {df['label'].value_counts().to_dict()}")
+          EOF
+
+          # Copy to modelready files
+          cp data/processed/phishing_features_complete.csv data/processed/url_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/dns_features_modelready.csv
+          cp data/processed/phishing_features_complete.csv data/processed/whois_features_modelready.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/url_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/dns_features_modelready_imputed.csv
+          cp data/processed/phishing_features_complete_imputed.csv data/processed/whois_features_modelready_imputed.csv
+
+      - name: Train URL models (15 algorithms)
+        run: |
+          echo "🧠 Training 15 URL models..."
+          python3 scripts/train_url_model.py
+          echo "✅ URL models trained"
+
+      - name: Train DNS models (15 algorithms)
+        run: |
+          echo "🧠 Training 15 DNS models..."
+          python3 scripts/train_dns_model.py
+          echo "✅ DNS models trained"
+
+      - name: Train WHOIS models (15 algorithms)
+        run: |
+          echo "🧠 Training 15 WHOIS models..."
+          python3 scripts/train_whois_model.py
+          echo "✅ WHOIS models trained"
+
+      - name: List trained models
+        run: |
+          echo "📁 Trained models:"
+          ls -la models/*.pkl models/*.joblib 2>/dev/null | head -50 || echo "No .pkl/.joblib files"
+          echo ""
+          echo "📊 Model count:"
+          echo "   URL models: $(ls models/url_*.pkl 2>/dev/null | wc -l)"
+          echo "   DNS models: $(ls models/dns_*.pkl 2>/dev/null | wc -l)"
+          echo "   WHOIS models: $(ls models/whois_*.pkl 2>/dev/null | wc -l)"
+
+      - name: Upload trained models as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trained-models-${{ needs.collect-urls.outputs.batch_date }}
+          path: |
+            models/*.pkl
+            models/*.joblib
+            models/*.json
+          retention-days: 30
+
+  # ========================================================================
+  # STEP 4: Find Best Ensemble Combination
+  # ========================================================================
+  find-best-ensemble:
+    name: "Step 4: Find Best Ensemble"
+    runs-on: ubuntu-latest
+    needs: [collect-urls, train-models]
+    outputs:
+      best_url_model: ${{ steps.ensemble.outputs.best_url_model }}
+      best_dns_model: ${{ steps.ensemble.outputs.best_dns_model }}
+      best_whois_model: ${{ steps.ensemble.outputs.best_whois_model }}
+      ensemble_accuracy: ${{ steps.ensemble.outputs.ensemble_accuracy }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download trained models
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models-${{ needs.collect-urls.outputs.batch_date }}
+          path: models/
+
+      - name: Download master dataset
+        run: |
+          mkdir -p data/processed
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
+
+      - name: Find best ensemble combination
+        id: ensemble
+        run: |
+          python3 << 'EOF'
+          import os
+          import json
+          import joblib
+          import pandas as pd
+          import numpy as np
+          from sklearn.model_selection import train_test_split
+          from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+
+          # Load data
+          df = pd.read_csv('data/processed/phishing_features_complete.csv')
+
+          # Prepare labels
+          df['label'] = df['label'].astype(str).str.strip().str.lower()
+          label_map = {'phishing': 1, '1': 1, '1.0': 1, 'legitimate': 0, '0': 0, '0.0': 0}
+          df['label'] = df['label'].map(label_map)
+          df = df.dropna(subset=['label'])
+
+          y = df['label'].astype(int)
+
+          # Get feature columns
+          non_feature_cols = ['url', 'label', 'source', 'bucket']
+          feature_cols = [c for c in df.columns if c not in non_feature_cols]
+          X = df[feature_cols].fillna(0)
+
+          # Split data
+          X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+          print(f"📊 Test set: {len(y_test)} samples")
+          print(f"   Phishing: {sum(y_test)}, Legitimate: {len(y_test) - sum(y_test)}")
+
+          # Find all models
+          model_files = [f for f in os.listdir('models') if f.endswith('.pkl') or f.endswith('.joblib')]
+
+          url_models = [f for f in model_files if 'url' in f.lower()]
+          dns_models = [f for f in model_files if 'dns' in f.lower()]
+          whois_models = [f for f in model_files if 'whois' in f.lower()]
+
+          print(f"\n🔍 Found models: {len(url_models)} URL, {len(dns_models)} DNS, {len(whois_models)} WHOIS")
+
+          def evaluate_model(model_path, X_test, y_test):
+              """Evaluate a single model and return metrics."""
+              try:
+                  model_data = joblib.load(model_path)
+                  if isinstance(model_data, dict):
+                      model = model_data.get('model', model_data)
+                      cols = model_data.get('feature_columns', list(X_test.columns))
+                  else:
+                      model = model_data
+                      cols = list(X_test.columns)
+
+                  # Align features
+                  X_aligned = X_test.reindex(columns=cols, fill_value=0)
+
+                  # Get predictions
+                  if hasattr(model, 'predict_proba'):
+                      proba = model.predict_proba(X_aligned)[:, 1]
+                  else:
+                      proba = model.predict(X_aligned)
+
+                  preds = (proba >= 0.5).astype(int)
+
+                  return {
+                      'accuracy': accuracy_score(y_test, preds),
+                      'f1': f1_score(y_test, preds),
+                      'auc': roc_auc_score(y_test, proba) if len(np.unique(proba)) > 1 else 0.5,
+                      'proba': proba
+                  }
+              except Exception as e:
+                  print(f"   ⚠️ Error evaluating {model_path}: {e}")
+                  return None
+
+          # Evaluate each model type and find the best
+          best_models = {}
+
+          for model_type, model_list in [('url', url_models), ('dns', dns_models), ('whois', whois_models)]:
+              print(f"\n📈 Evaluating {model_type.upper()} models...")
+              best_score = 0
+              best_name = None
+              best_proba = None
+
+              for model_file in model_list:
+                  result = evaluate_model(f'models/{model_file}', X_test, y_test)
+                  if result and result['f1'] > best_score:
+                      best_score = result['f1']
+                      best_name = model_file
+                      best_proba = result['proba']
+                      print(f"   ✓ {model_file}: F1={result['f1']:.4f}, AUC={result['auc']:.4f}")
+
+              if best_name:
+                  best_models[model_type] = {
+                      'name': best_name,
+                      'f1': best_score,
+                      'proba': best_proba
+                  }
+                  print(f"   🏆 Best {model_type.upper()}: {best_name} (F1={best_score:.4f})")
+
+          # Create ensemble prediction (average of best models)
+          print("\n🔗 Creating ensemble from best models...")
+
+          ensemble_proba = np.zeros(len(y_test))
+          n_models = 0
+
+          for model_type in ['url', 'dns', 'whois']:
+              if model_type in best_models and best_models[model_type]['proba'] is not None:
+                  ensemble_proba += best_models[model_type]['proba']
+                  n_models += 1
+
+          if n_models > 0:
+              ensemble_proba /= n_models
+              ensemble_preds = (ensemble_proba >= 0.5).astype(int)
+
+              ensemble_acc = accuracy_score(y_test, ensemble_preds)
+              ensemble_f1 = f1_score(y_test, ensemble_preds)
+              ensemble_auc = roc_auc_score(y_test, ensemble_proba)
+
+              print(f"\n🎯 ENSEMBLE RESULTS:")
+              print(f"   Accuracy: {ensemble_acc:.4f}")
+              print(f"   F1 Score: {ensemble_f1:.4f}")
+              print(f"   AUC-ROC:  {ensemble_auc:.4f}")
+
+              # Save results
+              results = {
+                  'best_url_model': best_models.get('url', {}).get('name', 'N/A'),
+                  'best_dns_model': best_models.get('dns', {}).get('name', 'N/A'),
+                  'best_whois_model': best_models.get('whois', {}).get('name', 'N/A'),
+                  'ensemble_accuracy': float(ensemble_acc),
+                  'ensemble_f1': float(ensemble_f1),
+                  'ensemble_auc': float(ensemble_auc)
+              }
+
+              with open('models/best_ensemble.json', 'w') as f:
+                  json.dump(results, f, indent=2)
+
+              # Write to GitHub output
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"best_url_model={results['best_url_model']}\n")
+                  f.write(f"best_dns_model={results['best_dns_model']}\n")
+                  f.write(f"best_whois_model={results['best_whois_model']}\n")
+                  f.write(f"ensemble_accuracy={results['ensemble_accuracy']}\n")
+
+          EOF
+
+      - name: Upload ensemble config
+        uses: actions/upload-artifact@v4
+        with:
+          name: ensemble-config-${{ needs.collect-urls.outputs.batch_date }}
+          path: models/best_ensemble.json
+          retention-days: 30
+
+  # ========================================================================
+  # STEP 5: Deploy and Test on Unseen URL
+  # ========================================================================
+  deploy-and-test:
+    name: "Step 5: Deploy & Test"
+    runs-on: ubuntu-latest
+    needs: [collect-urls, train-models, find-best-ensemble]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download trained models
+        uses: actions/download-artifact@v4
+        with:
+          name: trained-models-${{ needs.collect-urls.outputs.batch_date }}
+          path: models/
+
+      - name: Download ensemble config
+        uses: actions/download-artifact@v4
+        with:
+          name: ensemble-config-${{ needs.collect-urls.outputs.batch_date }}
+          path: models/
+
+      - name: Test on unseen URL
+        run: |
+          TEST_URL="${{ github.event.inputs.test_url }}"
+
+          # Default test URLs if none provided
+          if [ -z "$TEST_URL" ]; then
+            TEST_URL="https://www.microsoft.com"
+          fi
+
+          echo "🧪 Testing on unseen URL: $TEST_URL"
+
+          python3 << EOF
+          import sys
+          sys.path.insert(0, '.')
+
+          from src.api.predict_utils import predict_url_risk, predict_ensemble_risk
+
+          test_url = "$TEST_URL"
+
+          print(f"\n{'='*60}")
+          print(f"TEST URL: {test_url}")
+          print(f"{'='*60}")
+
+          # URL model prediction
+          url_prob, url_latency, url_model, _ = predict_url_risk(test_url)
+          print(f"\n📊 URL Model:")
+          print(f"   Model: {url_model}")
+          print(f"   Risk Score: {url_prob:.4f}")
+          print(f"   Verdict: {'PHISHING' if url_prob >= 0.5 else 'SAFE'}")
+          print(f"   Latency: {url_latency:.0f}ms")
+
+          # Ensemble prediction
+          ens_prob, ens_latency, ens_model, debug = predict_ensemble_risk(test_url)
+          print(f"\n🔗 Ensemble Model:")
+          print(f"   Risk Score: {ens_prob:.4f}")
+          print(f"   Verdict: {'PHISHING' if ens_prob >= 0.5 else 'SAFE'}")
+          print(f"   Latency: {ens_latency:.0f}ms")
+
+          if debug:
+              print(f"\n   Debug info:")
+              for k, v in debug.items():
+                  if isinstance(v, float):
+                      print(f"      {k}: {v:.4f}")
+                  else:
+                      print(f"      {k}: {v}")
+
+          print(f"\n{'='*60}")
+          print("✅ END-TO-END TEST COMPLETE!")
+          print(f"{'='*60}")
+          EOF
+
+      - name: Print ensemble results
+        run: |
+          echo ""
+          echo "📊 FINAL RESULTS SUMMARY"
+          echo "========================"
+          echo "Best URL Model: ${{ needs.find-best-ensemble.outputs.best_url_model }}"
+          echo "Best DNS Model: ${{ needs.find-best-ensemble.outputs.best_dns_model }}"
+          echo "Best WHOIS Model: ${{ needs.find-best-ensemble.outputs.best_whois_model }}"
+          echo "Ensemble Accuracy: ${{ needs.find-best-ensemble.outputs.ensemble_accuracy }}"
+          echo ""
+          echo "URLs collected: ${{ needs.collect-urls.outputs.phishing_count }} phishing + ${{ needs.collect-urls.outputs.legit_count }} legitimate"
+
+      - name: Commit trained models
+        run: |
+          git config user.name "EpbAiD"
+          git config user.email "eeshanpbhanap@gmail.com"
+
+          git add models/
+
+          if git diff --staged --quiet; then
+            echo "No model changes to commit"
+            exit 0
+          fi
+
+          BATCH_DATE="${{ needs.collect-urls.outputs.batch_date }}"
+          ACCURACY="${{ needs.find-best-ensemble.outputs.ensemble_accuracy }}"
+
+          git commit -m "[e2e-test] Train and deploy models (batch $BATCH_DATE)
+
+          - Collected ${{ needs.collect-urls.outputs.phishing_count }} phishing + ${{ needs.collect-urls.outputs.legit_count }} legitimate URLs
+          - Trained 45 models (15 URL + 15 DNS + 15 WHOIS)
+          - Best ensemble accuracy: ${ACCURACY}
+          - Best URL model: ${{ needs.find-best-ensemble.outputs.best_url_model }}
+          - Best DNS model: ${{ needs.find-best-ensemble.outputs.best_dns_model }}
+          - Best WHOIS model: ${{ needs.find-best-ensemble.outputs.best_whois_model }}"
+
+          git push

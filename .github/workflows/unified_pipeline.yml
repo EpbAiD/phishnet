@@ -288,6 +288,29 @@ jobs:
           mkdir -p data/processed
           aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
 
+      - name: Apply user feedback corrections
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Checking for user feedback corrections..."
+          pip install psycopg2-binary
+
+          # Export corrections from PostgreSQL (if available)
+          python3 scripts/export_feedback_corrections.py \
+            --output data/feedback/corrections.csv \
+            --days 30 \
+            --min-corrections 5 \
+            --no-s3 || echo "No corrections to export"
+
+          # Merge corrections into training data (if corrections exist)
+          if [ -f "data/feedback/corrections.csv" ]; then
+            python3 scripts/merge_feedback_for_training.py \
+              --corrections data/feedback/corrections.csv \
+              --master data/processed/phishing_features_complete.csv \
+              --no-download \
+              --no-upload || echo "No corrections to merge"
+          fi
+
       - name: Prepare model-ready datasets
         run: |
           # Encode labels and create imputed version
