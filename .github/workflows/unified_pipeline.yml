@@ -297,9 +297,13 @@ jobs:
 
           df = pd.read_csv('data/processed/phishing_features_complete.csv')
 
-          # Encode labels
+          # Encode labels - handle both string and numeric formats
           if 'label' in df.columns:
-              df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
+              # If labels are strings, map them
+              if df['label'].dtype == 'object':
+                  df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
+              # Ensure labels are integers (handles float like 0.0, 1.0)
+              df['label'] = df['label'].astype(int)
 
           df.to_csv('data/processed/phishing_features_complete.csv', index=False)
 
@@ -315,6 +319,7 @@ jobs:
           df_imputed.to_csv('data/processed/phishing_features_complete_imputed.csv', index=False)
 
           print(f"✅ Prepared {len(df)} rows for training")
+          print(f"   Label distribution: {df['label'].value_counts().to_dict()}")
           EOF
 
           # Copy to modelready files
