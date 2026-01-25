@@ -273,22 +273,33 @@ jobs:
           print(f"Features found: URL={len(url_cols)}, DNS={len(dns_cols)}, WHOIS={len(whois_cols)}")
 
           # Create SEPARATE model-ready files for each feature type
+          # Save BOTH formats: _imputed (for training) and _modelready (for test_ensemble_combinations)
           for name, cols in [('url', url_cols), ('dns', dns_cols), ('whois', whois_cols)]:
               if not cols:
                   print(f"  WARNING: No {name.upper()} features found")
                   continue
-              df_subset = df[cols + ['label_encoded']].copy().fillna(0)
-              df_subset.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
-              print(f"  Saved {name}_features_modelready_imputed.csv with {len(cols)} features")
+
+              # Version for training (with label_encoded)
+              df_train = df[cols + ['label_encoded']].copy().fillna(0)
+              df_train.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+
+              # Version for test_ensemble_combinations.py (with url and label columns)
+              if 'url' in df.columns:
+                  df_test = df[['url'] + cols + ['label_encoded']].copy().fillna(0)
+                  df_test = df_test.rename(columns={'label_encoded': 'label'})
+                  df_test.to_csv(f'data/processed/{name}_features_modelready.csv', index=False)
+
+              print(f"  Saved {name}_features_modelready.csv with {len(cols)} features")
           EOFPY
 
             echo ""
-            echo "🏋️ Step 9: Training 45 models (15 per feature type)..."
-            mkdir -p models
+            echo "🏋️ Step 9: Training 45 models with 5-fold CV (15 per feature type)..."
+            mkdir -p models analysis
             python3 << 'EOFPY'
           import pandas as pd
           import numpy as np
-          from sklearn.model_selection import train_test_split
+          from sklearn.model_selection import StratifiedKFold
+          from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
           from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, ExtraTreesClassifier, BaggingClassifier
           from sklearn.linear_model import LogisticRegression
           from sklearn.tree import DecisionTreeClassifier
@@ -322,12 +333,12 @@ jobs:
               'voting_base': RandomForestClassifier(n_estimators=50, random_state=42),
           }
 
-          results = {'url': {}, 'dns': {}, 'whois': {}}
+          skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-          # Train SEPARATE models for each feature type
+          # Train SEPARATE models for each feature type with 5-fold CV
           for feature_type in ['url', 'dns', 'whois']:
               print(f"\n{'='*60}")
-              print(f"Training {feature_type.upper()} models...")
+              print(f"Training {feature_type.upper()} models with 5-fold CV...")
               print(f"{'='*60}")
 
               try:
@@ -337,43 +348,81 @@ jobs:
                   continue
 
               X = df.drop('label_encoded', axis=1)
-              y = df['label_encoded']
+              y = df['label_encoded'].values
               feature_cols = list(X.columns)
 
               print(f"  {len(X)} samples, {len(feature_cols)} features")
 
-              if len(y.unique()) < 2:
+              if len(np.unique(y)) < 2:
                   print(f"  Skipping {feature_type} - only one class")
                   continue
 
-              X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+              cv_results = []
 
-              for name, model in models.items():
+              for name, model_template in models.items():
+                  # Clone model for each iteration
+                  import copy
+                  fold_rocs = []
+                  fold_accs = []
+                  fold_f1s = []
+
                   try:
-                      model.fit(X_train, y_train)
-                      accuracy = model.score(X_test, y_test)
-                      results[feature_type][name] = accuracy
-                      joblib.dump(model, f'models/{feature_type}_{name}.pkl')
+                      for fold, (tr_idx, va_idx) in enumerate(skf.split(X, y), 1):
+                          model = copy.deepcopy(model_template)
+                          X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
+                          y_tr, y_va = y[tr_idx], y[va_idx]
+
+                          model.fit(X_tr, y_tr)
+
+                          if hasattr(model, 'predict_proba'):
+                              probs = model.predict_proba(X_va)[:, 1]
+                          else:
+                              scores = model.decision_function(X_va)
+                              probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                          preds = (probs >= 0.5).astype(int)
+
+                          fold_rocs.append(roc_auc_score(y_va, probs))
+                          fold_accs.append(accuracy_score(y_va, preds))
+                          fold_f1s.append(f1_score(y_va, preds))
+
+                      # Average metrics across folds
+                      mean_roc = np.mean(fold_rocs)
+                      mean_acc = np.mean(fold_accs)
+                      mean_f1 = np.mean(fold_f1s)
+
+                      cv_results.append({
+                          'model': name,
+                          'roc_auc': mean_roc,
+                          'accuracy': mean_acc,
+                          'f1': mean_f1
+                      })
+
+                      # Final fit on all data and save
+                      final_model = copy.deepcopy(model_template)
+                      final_model.fit(X, y)
+                      joblib.dump(final_model, f'models/{feature_type}_{name}.pkl')
                       joblib.dump(feature_cols, f'models/{feature_type}_{name}_feature_cols.pkl')
-                      print(f"    {name}: {accuracy:.4f}")
+
+                      print(f"    {name}: ROC={mean_roc:.4f} ACC={mean_acc:.4f} F1={mean_f1:.4f}")
+
                   except Exception as e:
                       print(f"    {name}: FAILED - {e}")
 
-          with open('models/training_results.json', 'w') as f:
-              json.dump(results, f, indent=2)
-
-          print(f"\n{'='*60}")
-          print("Best models per feature type:")
-          for ft in ['url', 'dns', 'whois']:
-              if results[ft]:
-                  best = max(results[ft].items(), key=lambda x: x[1])
-                  print(f"  {ft.upper()}: {best[0]} ({best[1]:.4f})")
+              # Save CV results for this feature type (needed by test_ensemble_combinations.py)
+              if cv_results:
+                  cv_df = pd.DataFrame(cv_results).sort_values('roc_auc', ascending=False)
+                  cv_df.to_csv(f'analysis/{feature_type}_cv_results.csv', index=False)
+                  print(f"\n  📊 Saved analysis/{feature_type}_cv_results.csv")
+                  print(f"     Top 3: {list(cv_df.head(3)['model'].values)}")
           EOFPY
 
             echo ""
-            echo "🔗 Step 10: Evaluating ensemble..."
-            python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 || {
-              echo "⚠️ Ensemble evaluation failed - see error above"
+            echo "🔗 Step 10: Testing ensemble combinations (top 3 × top 3 × top 3 × 4 weights = 108)..."
+            python3 scripts/test_ensemble_combinations.py || {
+              echo "⚠️ Ensemble combination testing failed, trying fallback..."
+              # Fallback: use simplified ensemble comparison
+              python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 || echo "Fallback also failed"
             }
 
             # Get best results from training
