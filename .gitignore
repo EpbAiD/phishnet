@@ -94,3 +94,4 @@ Thumbs.db
 # Analysis outputs
 analysis/*_old.csv
 analysis/*_backup.csv
+phishnet-key.pem

@@ -1,5 +1,6 @@
-name: Validation Pipeline - Complete End-to-End
+name: Validation Pipeline - Complete End-to-End (DEPRECATED - Use unified_pipeline.yml)
 
+# DISABLED: Migrated to AWS-based unified_pipeline.yml
 # VALIDATION WORKFLOW: Run 10 times to prove system works
 # Each run: Collect 1000 URLs → Extract features → Train → Deploy
 # Master dataset grows: 1K → 2K → 3K → ... → 10K
@@ -7,6 +8,7 @@ name: Validation Pipeline - Complete End-to-End
 
 on:
   workflow_dispatch:
+    # Manual trigger only - scheduled runs disabled
     inputs:
       num_urls:
         description: 'Number of URLs to collect'

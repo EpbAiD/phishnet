@@ -1,10 +1,8 @@
-name: Verify VM Processing Complete
+name: Verify VM Processing Complete (DEPRECATED - Use unified_pipeline.yml)
 
+# DISABLED: Migrated to AWS-based unified_pipeline.yml
 on:
-  schedule:
-    # Run at 3 PM EST (20:00 UTC) - 6 hours after collection
-    - cron: '0 20 * * *'
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger only - scheduled runs disabled
     inputs:
       date:
         description: 'Date to verify (YYYYMMDD)'
