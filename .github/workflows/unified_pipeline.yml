@@ -296,9 +296,16 @@ jobs:
           import numpy as np
 
           df = pd.read_csv('data/processed/phishing_features_complete.csv')
+          print(f"📊 Loaded {len(df)} rows from S3")
 
-          # Encode labels - handle both string and numeric formats
+          # Drop rows with missing labels
           if 'label' in df.columns:
+              before = len(df)
+              df = df.dropna(subset=['label'])
+              dropped = before - len(df)
+              if dropped > 0:
+                  print(f"⚠️  Dropped {dropped} rows with missing labels")
+
               # If labels are strings, map them
               if df['label'].dtype == 'object':
                   df['label'] = df['label'].map({'phishing': 1, 'legitimate': 0})
