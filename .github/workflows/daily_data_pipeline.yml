@@ -1,10 +1,8 @@
-name: Daily Data Collection & Processing
+name: Daily Data Collection & Processing (DEPRECATED - Use unified_pipeline.yml)
 
+# DISABLED: Migrated to AWS-based unified_pipeline.yml
 on:
-  schedule:
-    # Run daily at 9 AM EST (14:00 UTC)
-    - cron: '0 14 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Manual trigger only - scheduled runs disabled
     inputs:
       num_urls:
         description: 'Number of URLs to collect'

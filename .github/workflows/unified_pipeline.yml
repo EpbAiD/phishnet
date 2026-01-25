@@ -2,6 +2,7 @@ name: Unified ML Pipeline
 
 # Single configurable pipeline - reads .github/pipeline_config.yml
 # Change frequencies in config file instead of editing workflow
+# Uses AWS (EC2, S3, RDS) for infrastructure
 
 on:
   schedule:
@@ -21,9 +22,10 @@ on:
         required: false
 
 env:
-  GCP_PROJECT_ID: coms-452404
-  GCP_ZONE: us-central1-c
-  VM_NAME: dns-whois-fetch-25
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+  EC2_HOST: 3.92.88.199
   CONFIG_FILE: .github/pipeline_config.yml
 
 jobs:
@@ -129,7 +131,7 @@ jobs:
           echo "  Deployment: $SHOULD_RUN_DEPLOYMENT"
 
   # ========================================================================
-  # JOB 2: Data Collection & Feature Extraction
+  # JOB 2: Data Collection & Feature Extraction (AWS)
   # ========================================================================
   data-and-features:
     name: Collect Data & Extract Features
@@ -149,15 +151,14 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt boto3
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-      - name: Setup GCloud CLI
-        uses: google-github-actions/setup-gcloud@v2
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Set batch info
         id: batch
@@ -181,53 +182,67 @@ jobs:
           echo "Extracting URL features..."
           python3 scripts/extract_url_features.py ${{ env.batch_file }} data/processed/url_features_${{ env.batch_date }}.csv
 
-      - name: Upload batch to GCS for VM processing
+      - name: Upload batch to S3 for EC2 processing
         run: |
-          echo "Uploading batch and URL features to GCS..."
-          gcloud storage cp ${{ env.batch_file }} gs://phishnet-pipeline-data/queue/${{ env.batch_name }}
-          gcloud storage cp data/processed/url_features_${{ env.batch_date }}.csv gs://phishnet-pipeline-data/queue/url_features_${{ env.batch_date }}.csv
+          echo "Uploading batch and URL features to S3..."
+          aws s3 cp ${{ env.batch_file }} s3://${{ env.S3_BUCKET }}/queue/${{ env.batch_name }}
+          aws s3 cp data/processed/url_features_${{ env.batch_date }}.csv s3://${{ env.S3_BUCKET }}/queue/url_features_${{ env.batch_date }}.csv
 
-      - name: Start VM
+      - name: Start EC2 instance
         run: |
-          VM_STATUS=$(gcloud compute instances describe ${{ env.VM_NAME }} \
-            --zone=${{ env.GCP_ZONE }} --format="get(status)")
+          INSTANCE_STATE=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
 
-          if [ "$VM_STATUS" = "TERMINATED" ]; then
-            echo "Starting VM..."
-            gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }}
-            sleep 90
+          echo "EC2 instance state: $INSTANCE_STATE"
+
+          if [ "$INSTANCE_STATE" = "stopped" ]; then
+            echo "Starting EC2 instance..."
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            echo "Waiting for instance to initialize..."
+            sleep 60
           else
-            echo "VM already running"
+            echo "EC2 instance already running"
           fi
 
-      - name: Upload updated VM script to GCS
+          # Get current public IP (may change after restart)
+          EC2_IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "EC2 Public IP: $EC2_IP"
+          echo "ec2_ip=$EC2_IP" >> $GITHUB_ENV
+
+      - name: Upload VM script to S3
         run: |
           echo "Uploading updated VM script..."
-          gcloud storage cp scripts/extract_vm_features.py gs://phishnet-pipeline-data/scripts/
+          aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
 
-      - name: VM Processing (DNS/WHOIS extraction + accumulation)
-        run: |
-          echo "Triggering VM to process batch..."
-          # Upload latest script to VM and run it
-          gcloud compute ssh ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} \
-            --command="sudo -u eeshanbhanap bash -c '\
-                       cd /home/eeshanbhanap/phishnet && \
-                       gcloud storage cp gs://phishnet-pipeline-data/scripts/extract_vm_features.py scripts/ && \
-                       python3 scripts/extract_vm_features.py ${{ env.batch_date }}'"
+      - name: EC2 Processing (DNS/WHOIS extraction + accumulation)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ec2-user/phishnet
+            aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
+            python3 scripts/extract_vm_features_aws.py ${{ env.batch_date }}
+            echo "✅ EC2 processing complete - master dataset updated in S3"
 
-          echo "✅ VM processing complete - master dataset updated in GCS"
-
-      - name: Stop VM
+      - name: Stop EC2 instance
         if: always()
         run: |
-          gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.GCP_ZONE }} || true
+          echo "Stopping EC2 instance to save costs..."
+          aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
 
-      - name: Download master dataset from GCS for training
+      - name: Download master dataset from S3 for training
         run: |
-          echo "Downloading updated master dataset from GCS..."
+          echo "Downloading updated master dataset from S3..."
           mkdir -p data/processed
-          # Use new master file for validation testing
-          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv data/processed/phishing_features_complete.csv
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
 
       - name: Upload master dataset as artifact
         uses: actions/upload-artifact@v4
@@ -258,21 +273,20 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt boto3
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup GCloud CLI
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Download master dataset from GCS
+      - name: Download master dataset from S3
         run: |
-          echo "Downloading master dataset from GCS..."
+          echo "Downloading master dataset from S3..."
           mkdir -p data/processed
-          gcloud storage cp gs://phishnet-pipeline-data/master/phishing_features_master_v2.csv data/processed/phishing_features_complete.csv
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
 
       - name: Prepare model-ready datasets
         run: |
