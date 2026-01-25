@@ -316,20 +316,45 @@ jobs:
 
             echo ""
             echo "🔗 Step 10: Evaluating ensemble..."
-            python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 2>/dev/null || echo "Ensemble evaluation skipped"
+            python3 scripts/ensemble_comparison.py --test-size 500 --iterations 20 || {
+              echo "⚠️ Ensemble evaluation failed - see error above"
+            }
 
-            # Get best results
+            # Get best results from training
             BEST_ACC="N/A"
             BEST_F1="N/A"
             BEST_NAME="N/A"
             if [ -f "models/training_results.json" ]; then
-              BEST_ACC=$(python3 -c "import json; r=json.load(open('models/training_results.json')); print(max(max(v.values()) for v in r.values() if v))" 2>/dev/null || echo "N/A")
+              echo ""
+              echo "📊 Training Results:"
+              cat models/training_results.json
+              echo ""
+              BEST_ACC=$(python3 -c "
+          import json
+          r = json.load(open('models/training_results.json'))
+          all_accs = []
+          for feature_type, models in r.items():
+              if models:
+                  for name, acc in models.items():
+                      all_accs.append(acc)
+          if all_accs:
+              print(f'{max(all_accs):.4f}')
+          else:
+              print('N/A')
+          " 2>/dev/null || echo "N/A")
+              echo "Best model accuracy: $BEST_ACC"
             fi
 
             LATEST_ENSEMBLE=$(ls -t analysis/ensemble_comparison/comparison_*.json 2>/dev/null | head -1)
             if [ -n "$LATEST_ENSEMBLE" ]; then
-              BEST_F1=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(r[0].get('f1_score', 'N/A') if isinstance(r, list) else 'N/A')" 2>/dev/null || echo "N/A")
-              BEST_NAME=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(r[0].get('name', 'N/A') if isinstance(r, list) else 'N/A')" 2>/dev/null || echo "N/A")
+              echo ""
+              echo "📊 Ensemble Results from: $LATEST_ENSEMBLE"
+              BEST_F1=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(f\"{r[0].get('f1_score', 'N/A'):.4f}\" if isinstance(r, list) and r else 'N/A')" 2>/dev/null || echo "N/A")
+              BEST_NAME=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(r[0].get('name', 'N/A') if isinstance(r, list) and r else 'N/A')" 2>/dev/null || echo "N/A")
+              BEST_ENS_ACC=$(python3 -c "import json; r=json.load(open('$LATEST_ENSEMBLE')); print(f\"{r[0].get('accuracy', 'N/A'):.4f}\" if isinstance(r, list) and r else 'N/A')" 2>/dev/null || echo "N/A")
+              echo "Best ensemble: $BEST_NAME (Accuracy: $BEST_ENS_ACC, F1: $BEST_F1)"
+            else
+              echo "⚠️ No ensemble comparison results found"
             fi
 
             # Record results
@@ -362,5 +387,6 @@ jobs:
           name: validation-results-${{ github.run_id }}
           path: |
             analysis/validation_runs/
+            analysis/ensemble_comparison/
             models/training_results.json
           retention-days: 30
