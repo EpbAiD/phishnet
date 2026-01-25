@@ -16,11 +16,8 @@ stages:
   # STAGE 1: Data Collection
   data_collection:
     frequency: "daily"       # How often to collect URLs
-    num_urls: 100            # URLs per collection - collecting 70% legitimate, 30% phishing
+    num_urls: 100            # URLs per collection - 50:50 balanced (phishing:legitimate)
     enabled: true
-    # NOTE: fetch_urls.py currently prioritizes legitimate URLs (70:30 ratio)
-    # to fix class imbalance (master dataset is 91.9% phishing, 8.1% legitimate)
-    # Target: Reach 50:50 balance at ~2000 total URLs
 
   # STAGE 2: Feature Extraction (VM Processing)
   feature_extraction:

@@ -200,11 +200,9 @@ def fetch_urls(output_file: str, target_count: int = 1000):
         print()
         print(f"📊 Total unique phishing URLs fetched this round: {phishing_total}")
 
-        # 5. Legitimate URLs - Generate more to fix class imbalance
-        # TEMPORARY: Prioritizing legitimate URLs to reach 50:50 balance in master dataset
-        # Current master has 91.9% phishing, need to collect MORE legitimate URLs
-        legit_needed = int(remaining_needed * 0.70)  # 70% legitimate for faster balancing
-        print(f"→ Generating {legit_needed} legitimate URLs (70% ratio to fix class imbalance)...")
+        # 5. Legitimate URLs - Generate proportional amount for 50:50 balance
+        legit_needed = remaining_needed // 2  # 50% legitimate for balanced dataset
+        print(f"→ Generating {legit_needed} legitimate URLs for balanced dataset...")
 
         legit_domains = [
             # Top websites
@@ -384,31 +382,29 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     # Create final dataframe from collected URLs
     df_all_collected = pd.DataFrame(collected_new_urls)
 
-    # Balance classes - TEMPORARY: Prioritize legitimate URLs to fix master dataset imbalance
-    # Master dataset is 91.9% phishing, so we collect 70% legitimate, 30% phishing
+    # Balance classes - aim for 50:50 split
     df_phish = df_all_collected[df_all_collected['label'] == 'phishing']
     df_legit = df_all_collected[df_all_collected['label'] == 'legitimate']
 
-    # Calculate target split: 70% legitimate, 30% phishing
-    n_legit_target = int(target_count * 0.70)
-    n_phish_target = int(target_count * 0.30)
+    # Calculate target split: 50% each class
+    n_per_class = target_count // 2
 
     # Sample from each class
-    df_phish_sample = df_phish.sample(n=min(len(df_phish), n_phish_target), random_state=42) if len(df_phish) > 0 else df_phish
-    df_legit_sample = df_legit.sample(n=min(len(df_legit), n_legit_target), random_state=42) if len(df_legit) > 0 else df_legit
+    df_phish_sample = df_phish.sample(n=min(len(df_phish), n_per_class), random_state=42) if len(df_phish) > 0 else df_phish
+    df_legit_sample = df_legit.sample(n=min(len(df_legit), n_per_class), random_state=42) if len(df_legit) > 0 else df_legit
 
     # If one class is short, take more from the other to reach target
     total_sampled = len(df_phish_sample) + len(df_legit_sample)
     if total_sampled < target_count:
         shortage = target_count - total_sampled
-        if len(df_legit_sample) < n_legit_target and len(df_legit) > len(df_legit_sample):
-            # Prioritize legitimate URLs
-            additional = min(shortage, len(df_legit) - len(df_legit_sample))
-            df_legit_sample = df_legit.sample(n=len(df_legit_sample) + additional, random_state=42)
-        elif len(df_phish_sample) < n_phish_target and len(df_phish) > len(df_phish_sample):
-            # Take more phishing if legitimate is maxed out
+        if len(df_phish_sample) < n_per_class and len(df_phish) > len(df_phish_sample):
+            # Take more phishing if available
             additional = min(shortage, len(df_phish) - len(df_phish_sample))
             df_phish_sample = df_phish.sample(n=len(df_phish_sample) + additional, random_state=42)
+        elif len(df_legit_sample) < n_per_class and len(df_legit) > len(df_legit_sample):
+            # Take more legitimate if available
+            additional = min(shortage, len(df_legit) - len(df_legit_sample))
+            df_legit_sample = df_legit.sample(n=len(df_legit_sample) + additional, random_state=42)
 
     # Combine
     df_final = pd.concat([df_phish_sample, df_legit_sample], ignore_index=True)
