@@ -45,108 +45,34 @@ logger = logging.getLogger(__name__)
 # Ensemble Configurations
 # ============================================
 
+# ============================================
+# 3-Model Ensemble Configurations (URL + DNS + WHOIS)
+# ============================================
+# Focus: Finding the best combination of all 3 model types
+# Each ensemble uses URL + DNS + WHOIS models with different algorithms
+
 ENSEMBLE_CONFIGS = {
-    "E1_URL_ONLY": {
-        "name": "URL Only",
-        "description": "Fastest - no external API calls needed",
-        "models": {
-            "url": "url_catboost.pkl"
-        },
-        "weights": {
-            "url": 1.0
-        },
-        "requires_dns": False,
-        "requires_whois": False,
-        "expected_latency_ms": 25
-    },
-
-    "E2_URL_DNS": {
-        "name": "URL + DNS",
-        "description": "Fast with network signals",
-        "models": {
-            "url": "url_catboost.pkl",
-            "dns": "dns_lightgbm.pkl"  # LightGBM fastest for DNS
-        },
-        "weights": {
-            "url": 0.70,
-            "dns": 0.30
-        },
-        "requires_dns": True,
-        "requires_whois": False,
-        "expected_latency_ms": 90
-    },
-
-    "E3_URL_WHOIS": {
-        "name": "URL + WHOIS (Current Production)",
-        "description": "Current production ensemble",
-        "models": {
-            "url": "url_catboost.pkl",
-            "whois": "whois_catboost.pkl"
-        },
-        "weights": {
-            "url": 0.60,
-            "whois": 0.40
-        },
-        "requires_dns": False,
-        "requires_whois": True,
-        "expected_latency_ms": 175
-    },
-
-    "E4_DNS_WHOIS": {
-        "name": "DNS + WHOIS",
-        "description": "Infrastructure-based detection",
-        "models": {
-            "dns": "dns_catboost.pkl",
-            "whois": "whois_catboost.pkl"
-        },
-        "weights": {
-            "dns": 0.50,
-            "whois": 0.50
-        },
-        "requires_dns": True,
-        "requires_whois": True,
-        "expected_latency_ms": 220
-    },
-
-    "E5_ALL_EQUAL": {
-        "name": "All 3 Equal Weights",
-        "description": "Balanced ensemble - all features equal",
+    "E1_CATBOOST_ALL": {
+        "name": "CatBoost Ensemble (All 3)",
+        "description": "All 3 models using CatBoost - best for categorical features",
         "models": {
             "url": "url_catboost.pkl",
             "dns": "dns_catboost.pkl",
             "whois": "whois_catboost.pkl"
-        },
-        "weights": {
-            "url": 0.333,
-            "dns": 0.333,
-            "whois": 0.334
-        },
-        "requires_dns": True,
-        "requires_whois": True,
-        "expected_latency_ms": 250
-    },
-
-    "E6_ALL_OPTIMIZED": {
-        "name": "All 3 Optimized Weights",
-        "description": "Best accuracy - optimized weights via grid search",
-        "models": {
-            "url": "url_catboost.pkl",
-            "dns": "dns_xgboost.pkl",
-            "whois": "whois_lightgbm.pkl"
         },
         "weights": {
             "url": 0.50,
-            "dns": 0.20,
-            "whois": 0.30
+            "dns": 0.25,
+            "whois": 0.25
         },
         "requires_dns": True,
         "requires_whois": True,
-        "expected_latency_ms": 230
+        "expected_latency_ms": 100
     },
 
-    "E7_ALL_SPEED": {
-        "name": "All 3 Speed-Optimized",
-        "description": "Lowest latency - lightweight models",
+    "E2_LIGHTGBM_ALL": {
+        "name": "LightGBM Ensemble (All 3)",
+        "description": "All 3 models using LightGBM - fastest inference",
         "models": {
             "url": "url_lightgbm.pkl",
             "dns": "dns_lightgbm.pkl",
@@ -159,7 +85,97 @@ ENSEMBLE_CONFIGS = {
         },
         "requires_dns": True,
         "requires_whois": True,
+        "expected_latency_ms": 80
+    },
+
+    "E3_XGBOOST_ALL": {
+        "name": "XGBoost Ensemble (All 3)",
+        "description": "All 3 models using XGBoost - robust performance",
+        "models": {
+            "url": "url_xgboost.pkl",
+            "dns": "dns_xgboost.pkl",
+            "whois": "whois_xgboost.pkl"
+        },
+        "weights": {
+            "url": 0.50,
+            "dns": 0.25,
+            "whois": 0.25
+        },
+        "requires_dns": True,
+        "requires_whois": True,
+        "expected_latency_ms": 90
+    },
+
+    "E4_RANDOM_FOREST_ALL": {
+        "name": "Random Forest Ensemble (All 3)",
+        "description": "All 3 models using Random Forest - interpretable",
+        "models": {
+            "url": "url_random_forest.pkl",
+            "dns": "dns_random_forest.pkl",
+            "whois": "whois_random_forest.pkl"
+        },
+        "weights": {
+            "url": 0.50,
+            "dns": 0.25,
+            "whois": 0.25
+        },
+        "requires_dns": True,
+        "requires_whois": True,
         "expected_latency_ms": 120
+    },
+
+    "E5_MIXED_BEST": {
+        "name": "Mixed Best Models (All 3)",
+        "description": "Best algorithm for each feature type",
+        "models": {
+            "url": "url_catboost.pkl",      # CatBoost for URL (handles categories well)
+            "dns": "dns_lightgbm.pkl",      # LightGBM for DNS (fast)
+            "whois": "whois_xgboost.pkl"    # XGBoost for WHOIS (robust)
+        },
+        "weights": {
+            "url": 0.50,
+            "dns": 0.25,
+            "whois": 0.25
+        },
+        "requires_dns": True,
+        "requires_whois": True,
+        "expected_latency_ms": 95
+    },
+
+    "E6_URL_HEAVY": {
+        "name": "URL-Heavy Ensemble (All 3)",
+        "description": "Higher weight on URL features",
+        "models": {
+            "url": "url_catboost.pkl",
+            "dns": "dns_catboost.pkl",
+            "whois": "whois_catboost.pkl"
+        },
+        "weights": {
+            "url": 0.60,
+            "dns": 0.20,
+            "whois": 0.20
+        },
+        "requires_dns": True,
+        "requires_whois": True,
+        "expected_latency_ms": 100
+    },
+
+    "E7_BALANCED": {
+        "name": "Balanced Ensemble (All 3)",
+        "description": "Equal weights for all 3 models",
+        "models": {
+            "url": "url_catboost.pkl",
+            "dns": "dns_catboost.pkl",
+            "whois": "whois_catboost.pkl"
+        },
+        "weights": {
+            "url": 0.333,
+            "dns": 0.333,
+            "whois": 0.334
+        },
+        "requires_dns": True,
+        "requires_whois": True,
+        "expected_latency_ms": 100
     }
 }
 
@@ -417,6 +433,13 @@ def load_test_data(test_size: int = 1000) -> Tuple[List[Dict], List[int]]:
     url_feature_cols = [c for c in url_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
     dns_feature_cols = [c for c in dns_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
     whois_feature_cols = [c for c in whois_df.columns if c not in ['url', 'label', 'label_encoded', 'bucket']]
+
+    logger.info(f"Feature counts: URL={len(url_feature_cols)}, DNS={len(dns_feature_cols)}, WHOIS={len(whois_feature_cols)}")
+
+    if len(dns_feature_cols) == 0:
+        logger.warning("⚠️ No DNS features found! Check if DNS features have correct column names.")
+    if len(whois_feature_cols) == 0:
+        logger.warning("⚠️ No WHOIS features found! Check if WHOIS features have correct column names.")
 
     # Limit to test_size samples
     n_samples = min(len(url_df), test_size)

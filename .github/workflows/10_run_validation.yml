@@ -234,10 +234,40 @@ jobs:
                   df[col], _ = pd.factorize(df[col])
                   print(f"  Encoded {col} -> numeric")
 
-          # Define feature groups
-          url_features = [c for c in df.columns if c.startswith(('url_', 'has_', 'is_', 'count_', 'len_', 'ratio_', 'domain_')) and not c.startswith(('dns_', 'whois_'))]
-          dns_features = [c for c in df.columns if c.startswith('dns_')]
-          whois_features = [c for c in df.columns if c.startswith('whois_')]
+          # Define feature groups based on actual column names in the dataset
+          # URL features: URL structure analysis
+          url_feature_names = [
+              'url_length', 'hostname_length', 'path_length', 'num_subdomains', 'num_dots',
+              'num_special_chars', 'num_digits', 'num_uppercase_chars', 'has_at_symbol',
+              'has_double_slash_redirect', 'has_dash_in_domain', 'is_ip_address', 'ip_category',
+              'has_encoded_chars', 'has_non_ascii_chars', 'url_entropy', 'hostname_entropy',
+              'digit_to_letter_ratio', 'domain_quality', 'tld_length', 'subdomain_entropy',
+              'subdomain_length', 'has_login_keyword', 'has_suspicious_words', 'has_brand_mismatch',
+              'file_type', 'is_file_download', 'is_script_file', 'is_shortened', 'num_fragments',
+              'num_query_params', 'num_directories', 'port', 'is_risky_port', 'protocol_mismatch',
+              'is_unknown_port', 'contains_hex_encoding', 'starts_with_https_but_contains_http',
+              'missing_hostname_flag'
+          ]
+
+          # DNS features: DNS record analysis
+          dns_feature_names = [
+              'has_A', 'num_A', 'has_AAAA', 'num_AAAA', 'has_MX', 'num_MX', 'has_NS', 'num_NS',
+              'has_TXT', 'num_TXT', 'has_CNAME', 'cname_chain_length', 'has_SOA', 'ttl_min',
+              'ttl_max', 'ttl_mean', 'ttl_var', 'mx_priority_min', 'mx_priority_max',
+              'num_distinct_ips', 'txt_entropy', 'has_SPF', 'has_DKIM', 'has_DMARC',
+              'has_wildcard_dns', 'dnssec_enabled'
+          ]
+
+          # WHOIS features: Domain registration analysis
+          whois_feature_names = [
+              'domain_age_days', 'registration_length_days', 'has_privacy_protection',
+              'whois_success'
+          ]
+
+          # Filter to only include columns that exist in the dataset
+          url_features = [c for c in url_feature_names if c in df.columns]
+          dns_features = [c for c in dns_feature_names if c in df.columns]
+          whois_features = [c for c in whois_feature_names if c in df.columns]
 
           print(f"Features: URL={len(url_features)}, DNS={len(dns_features)}, WHOIS={len(whois_features)}")
 
