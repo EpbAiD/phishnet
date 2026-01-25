@@ -149,11 +149,16 @@ jobs:
             echo "🖥️ Step 5: Starting EC2 for DNS/WHOIS extraction..."
             aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
             aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
-            sleep 60  # Wait for SSH
+
+            # Get the public IP dynamically
+            EC2_IP=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+            echo "   EC2 Public IP: $EC2_IP"
+
+            sleep 60  # Wait for SSH to be ready
 
             echo ""
             echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ubuntu@$EC2_HOST << EOFEC2
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ubuntu@$EC2_IP << EOFEC2
               cd /home/ubuntu
               aws s3 cp s3://${{ env.S3_BUCKET }}/queue/batch_${BATCH_DATE}.csv batch.csv
               aws s3 cp s3://${{ env.S3_BUCKET }}/queue/url_features_${BATCH_DATE}.csv url_features.csv
