@@ -227,6 +227,13 @@ jobs:
           elif 'label_encoded' not in df.columns:
               df['label_encoded'] = 0
 
+          # Convert all object/string columns to numeric using factorize
+          for col in df.columns:
+              if df[col].dtype == 'object' and col not in ['url', 'label']:
+                  df[col] = df[col].fillna('MISSING')
+                  df[col], _ = pd.factorize(df[col])
+                  print(f"  Encoded {col} -> numeric")
+
           # Define feature groups
           url_features = [c for c in df.columns if c.startswith(('url_', 'has_', 'is_', 'count_', 'len_', 'ratio_', 'domain_')) and not c.startswith(('dns_', 'whois_'))]
           dns_features = [c for c in df.columns if c.startswith('dns_')]
@@ -235,10 +242,20 @@ jobs:
           print(f"Features: URL={len(url_features)}, DNS={len(dns_features)}, WHOIS={len(whois_features)}")
 
           for name, features in [('url', url_features), ('dns', dns_features), ('whois', whois_features)]:
+              if not features:
+                  print(f"  ⚠️ No {name.upper()} features found - skipping")
+                  # Create empty file with just label column for consistency
+                  pd.DataFrame({'label_encoded': df['label_encoded']}).to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+                  continue
               cols = features + ['label_encoded']
               df_subset = df[cols].copy()
               df_imputed = df_subset.fillna(0)
+              # Ensure all columns are numeric
+              for c in df_imputed.columns:
+                  if df_imputed[c].dtype == 'object':
+                      df_imputed[c], _ = pd.factorize(df_imputed[c].fillna('MISSING'))
               df_imputed.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+              print(f"  Saved {name}_features_modelready_imputed.csv with {len(features)} features")
           EOFPY
 
             echo ""
