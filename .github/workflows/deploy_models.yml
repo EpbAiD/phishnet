@@ -1,0 +1,389 @@
+name: Deploy Models to Production
+
+# Deploys trained models from S3 to production
+# Run this AFTER training is complete (via 10_run_validation.yml)
+# Does NOT retrain - only deploys existing models
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_to_git:
+        description: 'Commit models to git repository'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      generate_shap:
+        description: 'Generate SHAP background data for explanations'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+
+jobs:
+  deploy:
+    name: Deploy Models
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt boto3 shap
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ================================================================
+      # STEP 1: Download trained models from S3
+      # ================================================================
+      - name: Download models from S3
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║              DOWNLOADING MODELS FROM S3                      ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          mkdir -p models
+
+          # Download all model files
+          aws s3 sync s3://${{ env.S3_BUCKET }}/models/ models/ --exclude "*" \
+            --include "*.pkl" \
+            --include "production_metadata.json"
+
+          # List downloaded models
+          echo ""
+          echo "📦 Downloaded models:"
+          ls -la models/*.pkl 2>/dev/null | head -20 || echo "No .pkl files found"
+
+          # Check production metadata
+          if [ -f "models/production_metadata.json" ]; then
+            echo ""
+            echo "📋 Production metadata:"
+            cat models/production_metadata.json
+          else
+            echo "⚠️ No production_metadata.json found - will use defaults"
+          fi
+
+      # ================================================================
+      # STEP 2: Download training data for SHAP background
+      # ================================================================
+      - name: Download training data for SHAP
+        if: ${{ github.event.inputs.generate_shap == 'true' }}
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║           DOWNLOADING DATA FOR SHAP BACKGROUND               ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          mkdir -p data/processed
+
+          # Download the 3 separate master files
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv data/processed/ || echo "URL master not found"
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/dns_features_master.csv data/processed/ || echo "DNS master not found"
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv data/processed/ || echo "WHOIS master not found"
+
+          echo ""
+          echo "📊 Downloaded data files:"
+          for f in data/processed/*_master.csv; do
+            if [ -f "$f" ]; then
+              rows=$(wc -l < "$f")
+              echo "  $f: $rows rows"
+            fi
+          done
+
+      # ================================================================
+      # STEP 3: Generate SHAP background data
+      # ================================================================
+      - name: Generate SHAP background data
+        if: ${{ github.event.inputs.generate_shap == 'true' }}
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║            GENERATING SHAP BACKGROUND DATA                   ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          python3 << 'EOFPY'
+          import pandas as pd
+          import numpy as np
+          import joblib
+          import json
+          import os
+
+          # Load production metadata to get selected models
+          metadata_path = 'models/production_metadata.json'
+          if os.path.exists(metadata_path):
+              with open(metadata_path) as f:
+                  metadata = json.load(f)
+              print(f"✅ Loaded production metadata")
+              print(f"   URL model: {metadata.get('url_model', 'N/A')}")
+              print(f"   DNS model: {metadata.get('dns_model', 'N/A')}")
+              print(f"   WHOIS model: {metadata.get('whois_model', 'N/A')}")
+          else:
+              # Default to catboost if no metadata
+              metadata = {
+                  'url_model': 'catboost',
+                  'dns_model': 'catboost',
+                  'whois_model': 'catboost'
+              }
+              print("⚠️ Using default models (catboost)")
+
+          # Generate SHAP background for each model type
+          for feature_type in ['url', 'dns', 'whois']:
+              print(f"\n--- Generating SHAP background for {feature_type.upper()} ---")
+
+              # Load data
+              data_path = f'data/processed/{feature_type}_features_master.csv'
+              if not os.path.exists(data_path):
+                  print(f"  ⚠️ Data file not found: {data_path}")
+                  continue
+
+              df = pd.read_csv(data_path)
+              print(f"  Loaded {len(df)} rows")
+
+              # Get feature columns (exclude metadata)
+              exclude_cols = ['url', 'label', 'label_encoded', 'domain', 'collected_at', 'bucket']
+              feature_cols = [c for c in df.columns if c not in exclude_cols]
+
+              # Prepare features
+              X = df[feature_cols].copy()
+
+              # Convert object columns to numeric
+              for col in X.columns:
+                  if X[col].dtype == 'object':
+                      X[col] = X[col].fillna('MISSING')
+                      X[col], _ = pd.factorize(X[col])
+
+              X = X.fillna(0)
+
+              # Sample background data (100 samples for SHAP)
+              n_background = min(100, len(X))
+              background = X.sample(n=n_background, random_state=42)
+
+              # Save background data
+              background_path = f'models/{feature_type}_shap_background.pkl'
+              joblib.dump(background, background_path)
+              print(f"  ✅ Saved {n_background} background samples to {background_path}")
+
+          print("\n✅ SHAP background generation complete!")
+          EOFPY
+
+      # ================================================================
+      # STEP 4: Verify models work with current code
+      # ================================================================
+      - name: Verify model compatibility
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║              VERIFYING MODEL COMPATIBILITY                   ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          python3 << 'EOFPY'
+          import joblib
+          import json
+          import os
+
+          # Load production metadata
+          metadata_path = 'models/production_metadata.json'
+          if os.path.exists(metadata_path):
+              with open(metadata_path) as f:
+                  metadata = json.load(f)
+          else:
+              metadata = {'url_model': 'catboost', 'dns_model': 'catboost', 'whois_model': 'catboost'}
+
+          print("Verifying selected models can be loaded...\n")
+
+          all_good = True
+          for feature_type in ['url', 'dns', 'whois']:
+              model_name = metadata.get(f'{feature_type}_model', 'catboost')
+              model_path = f'models/{feature_type}_{model_name}.pkl'
+              cols_path = f'models/{feature_type}_{model_name}_feature_cols.pkl'
+
+              print(f"{feature_type.upper()} Model ({model_name}):")
+
+              # Check model file
+              if os.path.exists(model_path):
+                  try:
+                      model = joblib.load(model_path)
+                      print(f"  ✅ Model loaded: {type(model).__name__}")
+                  except Exception as e:
+                      print(f"  ❌ Model load failed: {e}")
+                      all_good = False
+              else:
+                  print(f"  ❌ Model file not found: {model_path}")
+                  all_good = False
+
+              # Check feature columns
+              if os.path.exists(cols_path):
+                  try:
+                      cols = joblib.load(cols_path)
+                      print(f"  ✅ Feature columns: {len(cols)} features")
+                  except Exception as e:
+                      print(f"  ❌ Feature cols load failed: {e}")
+                      all_good = False
+              else:
+                  print(f"  ❌ Feature cols not found: {cols_path}")
+                  all_good = False
+
+              print()
+
+          if all_good:
+              print("✅ All models verified successfully!")
+          else:
+              print("⚠️ Some models missing or failed to load")
+              exit(1)
+          EOFPY
+
+      # ================================================================
+      # STEP 5: Upload models to S3 (including SHAP background)
+      # ================================================================
+      - name: Upload to S3
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║               UPLOADING TO S3 FOR API                        ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          # Upload all model files to S3
+          aws s3 sync models/ s3://${{ env.S3_BUCKET }}/models/ \
+            --include "*.pkl" \
+            --include "*.json"
+
+          echo "✅ Models uploaded to s3://${{ env.S3_BUCKET }}/models/"
+
+          # List uploaded files
+          echo ""
+          echo "📦 Files in S3:"
+          aws s3 ls s3://${{ env.S3_BUCKET }}/models/ | head -30
+
+      # ================================================================
+      # STEP 6: Commit to git repository
+      # ================================================================
+      - name: Commit models to repository
+        if: ${{ github.event.inputs.deploy_to_git == 'true' }}
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║            COMMITTING MODELS TO REPOSITORY                   ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add model files (selected models only to keep repo small)
+          # Read production metadata to know which models to add
+          python3 << 'EOFPY'
+          import json
+          import os
+
+          metadata_path = 'models/production_metadata.json'
+          if os.path.exists(metadata_path):
+              with open(metadata_path) as f:
+                  metadata = json.load(f)
+
+              # Output files to add
+              files_to_add = ['models/production_metadata.json']
+
+              for feature_type in ['url', 'dns', 'whois']:
+                  model_name = metadata.get(f'{feature_type}_model', 'catboost')
+                  files_to_add.append(f'models/{feature_type}_{model_name}.pkl')
+                  files_to_add.append(f'models/{feature_type}_{model_name}_feature_cols.pkl')
+
+                  # Add SHAP background if exists
+                  shap_path = f'models/{feature_type}_shap_background.pkl'
+                  if os.path.exists(shap_path):
+                      files_to_add.append(shap_path)
+
+              with open('/tmp/files_to_add.txt', 'w') as f:
+                  f.write('\n'.join(files_to_add))
+
+              print("Files to commit:")
+              for f in files_to_add:
+                  print(f"  {f}")
+          EOFPY
+
+          # Add the selected files
+          while read file; do
+            if [ -f "$file" ]; then
+              git add "$file"
+              echo "Added: $file"
+            fi
+          done < /tmp/files_to_add.txt
+
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          # Get model info for commit message
+          URL_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('url_model','unknown'))" 2>/dev/null || echo "unknown")
+          DNS_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('dns_model','unknown'))" 2>/dev/null || echo "unknown")
+          WHOIS_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('whois_model','unknown'))" 2>/dev/null || echo "unknown")
+
+          git commit -m "Deploy production models
+
+          Ensemble configuration:
+          - URL model: $URL_MODEL
+          - DNS model: $DNS_MODEL
+          - WHOIS model: $WHOIS_MODEL
+
+          Deployed via GitHub Actions workflow"
+
+          git push
+
+          echo ""
+          echo "✅ Models committed to repository!"
+
+      # ================================================================
+      # STEP 7: Summary
+      # ================================================================
+      - name: Deployment summary
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║                 DEPLOYMENT COMPLETE                          ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
+
+          if [ -f "models/production_metadata.json" ]; then
+            echo "📋 Production Configuration:"
+            cat models/production_metadata.json | python3 -m json.tool
+          fi
+
+          echo ""
+          echo "📦 Deployed Models:"
+          ls -la models/*.pkl 2>/dev/null | grep -v shap || echo "No models"
+
+          echo ""
+          echo "🔍 SHAP Background Data:"
+          ls -la models/*_shap_background.pkl 2>/dev/null || echo "No SHAP data"
+
+          echo ""
+          echo "✅ Models are now available:"
+          echo "   - S3: s3://${{ env.S3_BUCKET }}/models/"
+          if [ "${{ github.event.inputs.deploy_to_git }}" = "true" ]; then
+            echo "   - Git: models/ directory in repository"
+          fi
