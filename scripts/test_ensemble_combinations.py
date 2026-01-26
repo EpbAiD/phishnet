@@ -154,7 +154,7 @@ def load_test_data():
 
 def load_training_data_as_test():
     """FALLBACK: Load training data (not recommended for ensemble testing)."""
-    print("  ⚠️  WARNING: Using training data for testing - results will be overly optimistic!")
+    print("  ⚠️  WARNING: Using training data for latency benchmarking only!")
 
     # Load all three datasets
     url_df = pd.read_csv(f"{DATA_DIR}/url_features_modelready.csv")
@@ -172,13 +172,17 @@ def load_training_data_as_test():
     dns_df = dns_df[dns_df['url'].isin(common_urls)].sort_values('url').reset_index(drop=True)
     whois_df = whois_df[whois_df['url'].isin(common_urls)].sort_values('url').reset_index(drop=True)
 
-    # Extract features and labels
+    # Extract features and labels - keep separate columns per type
     url_y = url_df["label"].astype(int).values
     url_X = url_df.drop(columns=["url", "label", "bucket"], errors="ignore")
     dns_X = dns_df.drop(columns=["url", "label", "bucket"], errors="ignore")
     whois_X = whois_df.drop(columns=["url", "label", "bucket"], errors="ignore")
 
-    # Encode categorical
+    # Encode categorical - create copies to avoid SettingWithCopyWarning
+    url_X = url_X.copy()
+    dns_X = dns_X.copy()
+    whois_X = whois_X.copy()
+
     for df_X in [url_X, dns_X, whois_X]:
         obj_cols = df_X.select_dtypes(include=["object"]).columns
         for col in obj_cols:
@@ -190,6 +194,35 @@ def load_training_data_as_test():
         "dns": (dns_X, url_y),
         "whois": (whois_X, url_y)
     }
+
+
+def align_features_for_model(model_type: str, model_name: str, X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Align features to match the column order used during model training.
+
+    Args:
+        model_type: 'url', 'dns', or 'whois'
+        model_name: Model name (e.g., 'rf', 'catboost')
+        X: DataFrame with features
+
+    Returns:
+        DataFrame with columns in correct order for the model
+    """
+    feature_cols_path = f"{MODELS_DIR}/{model_type}_{model_name}_feature_cols.pkl"
+
+    if not os.path.exists(feature_cols_path):
+        # Fall back to using X as-is
+        return X
+
+    expected_cols = joblib.load(feature_cols_path)
+
+    # Create aligned DataFrame
+    aligned = pd.DataFrame(0, index=X.index, columns=expected_cols)
+    for col in expected_cols:
+        if col in X.columns:
+            aligned[col] = X[col].values
+
+    return aligned
 
 
 def measure_single_url_latency(model, X_single):
@@ -251,20 +284,27 @@ def test_ensemble_combination_with_cv(
     whois_metrics = whois_cv[whois_cv['model'] == whois_model_name].iloc[0]
 
     # Weighted ensemble CV metrics (estimated)
+    # Handle both column naming conventions: 'acc'/'phish_f1' (local) and 'accuracy'/'f1' (workflow)
+    def get_acc(metrics):
+        return metrics.get('acc', metrics.get('accuracy', 0))
+
+    def get_f1(metrics):
+        return metrics.get('phish_f1', metrics.get('f1', 0))
+
     ensemble_roc = (
         weights["url"] * url_metrics['roc_auc'] +
         weights["dns"] * dns_metrics['roc_auc'] +
         weights["whois"] * whois_metrics['roc_auc']
     )
     ensemble_acc = (
-        weights["url"] * url_metrics['accuracy'] +
-        weights["dns"] * dns_metrics['accuracy'] +
-        weights["whois"] * whois_metrics['accuracy']
+        weights["url"] * get_acc(url_metrics) +
+        weights["dns"] * get_acc(dns_metrics) +
+        weights["whois"] * get_acc(whois_metrics)
     )
     ensemble_f1 = (
-        weights["url"] * url_metrics['f1'] +
-        weights["dns"] * dns_metrics['f1'] +
-        weights["whois"] * whois_metrics['f1']
+        weights["url"] * get_f1(url_metrics) +
+        weights["dns"] * get_f1(dns_metrics) +
+        weights["whois"] * get_f1(whois_metrics)
     )
 
     # Load models for latency testing
@@ -276,9 +316,10 @@ def test_ensemble_combination_with_cv(
         return None
 
     # Measure SINGLE URL latency (realistic user scenario)
-    url_X_single = test_data["url"][0].iloc[[0]]  # Single row
-    dns_X_single = test_data["dns"][0].iloc[[0]]
-    whois_X_single = test_data["whois"][0].iloc[[0]]
+    # Align features to match training column order
+    url_X_single = align_features_for_model("url", url_model_name, test_data["url"][0].iloc[[0]])
+    dns_X_single = align_features_for_model("dns", dns_model_name, test_data["dns"][0].iloc[[0]])
+    whois_X_single = align_features_for_model("whois", whois_model_name, test_data["whois"][0].iloc[[0]])
 
     url_latency = measure_single_url_latency(url_model, url_X_single)
     dns_latency = measure_single_url_latency(dns_model, dns_X_single)
@@ -405,7 +446,10 @@ def main():
         print(f"\n{feature_type.upper()} Models:")
         print("-" * 60)
         for _, row in df.iterrows():
-            print(f"  {row['model']:20s} ROC={row['roc_auc']:.4f} ACC={row['accuracy']:.4f} F1={row['f1']:.4f}")
+            # Handle both column naming conventions
+            acc_val = row.get('acc', row.get('accuracy', 0))
+            f1_val = row.get('phish_f1', row.get('f1', 0))
+            print(f"  {row['model']:20s} ROC={row['roc_auc']:.4f} ACC={acc_val:.4f} F1={f1_val:.4f}")
 
     # Get top 3 models for each type
     url_top = url_results.nlargest(3, "roc_auc")["model"].values
