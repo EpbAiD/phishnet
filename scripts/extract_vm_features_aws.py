@@ -91,68 +91,98 @@ def extract_and_accumulate(batch_date: str):
     df_whois = pd.DataFrame(whois_features)
     print(f"✅ Extracted WHOIS features for {len(df_whois)} URLs")
 
-    # Step 4: Merge all features
+    # Step 4: Prepare THREE SEPARATE master files (not combined!)
+    # This ensures each model type uses ONLY its dedicated features
     print("\n" + "=" * 60)
-    print("STEP 4: Merge URL + DNS + WHOIS features")
+    print("STEP 4: Prepare SEPARATE master files (URL, DNS, WHOIS)")
     print("=" * 60)
 
-    merged = df_url_features.merge(df_dns, on='url', how='left')
-    merged = merged.merge(df_whois, on='url', how='left')
-    print(f"✅ Merged features: {len(merged)} rows × {len(merged.columns)} columns")
+    # Add label column to DNS and WHOIS from batch
+    df_dns = df_dns.merge(df_batch[['url', 'label']], on='url', how='left')
+    df_whois = df_whois.merge(df_batch[['url', 'label']], on='url', how='left')
 
-    # Step 5: Download existing master dataset from S3
+    print(f"✅ URL features: {len(df_url_features)} rows × {len(df_url_features.columns)} columns")
+    print(f"✅ DNS features: {len(df_dns)} rows × {len(df_dns.columns)} columns")
+    print(f"✅ WHOIS features: {len(df_whois)} rows × {len(df_whois.columns)} columns")
+
+    # Step 5: Download existing master datasets from S3 (3 separate files)
     print("\n" + "=" * 60)
-    print("STEP 5: Download existing master dataset from S3")
+    print("STEP 5: Download existing SEPARATE master datasets from S3")
     print("=" * 60)
 
-    master_file = "vm_data/master/phishing_features_master.csv"
+    masters = {
+        'url': {'new': df_url_features, 'file': 'vm_data/master/url_features_master.csv', 's3_key': 'master/url_features_master.csv'},
+        'dns': {'new': df_dns, 'file': 'vm_data/master/dns_features_master.csv', 's3_key': 'master/dns_features_master.csv'},
+        'whois': {'new': df_whois, 'file': 'vm_data/master/whois_features_master.csv', 's3_key': 'master/whois_features_master.csv'}
+    }
+
+    for feature_type, config in masters.items():
+        try:
+            s3.download_file(S3_BUCKET, config['s3_key'], config['file'])
+            config['existing'] = pd.read_csv(config['file'])
+            print(f"📊 Existing {feature_type.upper()} master: {len(config['existing'])} rows")
+        except Exception as e:
+            print(f"ℹ️  No existing {feature_type.upper()} master - creating new")
+            config['existing'] = None
+
+    # Step 6: Accumulate each master separately
+    print("\n" + "=" * 60)
+    print("STEP 6: Accumulate EACH master dataset separately")
+    print("=" * 60)
+
+    for feature_type, config in masters.items():
+        print(f"\n--- {feature_type.upper()} ---")
+        print(f"📊 New batch: {len(config['new'])} rows")
+
+        if config['existing'] is not None:
+            # Combine and deduplicate
+            df_combined = pd.concat([config['existing'], config['new']], ignore_index=True)
+            df_combined = df_combined.drop_duplicates(subset=['url'], keep='last')
+
+            added = len(df_combined) - len(config['existing'])
+            duplicates = len(config['new']) - added
+
+            print(f"✅ Combined: {len(df_combined)} rows (+{added} new, {duplicates} duplicates)")
+        else:
+            df_combined = config['new']
+            print(f"✅ Initial: {len(df_combined)} rows")
+
+        config['combined'] = df_combined
+        df_combined.to_csv(config['file'], index=False)
+
+    # Step 7: Upload all three masters back to S3
+    print("\n" + "=" * 60)
+    print("STEP 7: Upload THREE SEPARATE master datasets to S3")
+    print("=" * 60)
+
+    for feature_type, config in masters.items():
+        s3.upload_file(config['file'], S3_BUCKET, config['s3_key'])
+        print(f"✅ Uploaded {feature_type.upper()} master: {len(config['combined'])} rows")
+
+    # Also upload combined for backwards compatibility (optional)
+    merged = df_url_features.merge(df_dns.drop(columns=['label'], errors='ignore'), on='url', how='left')
+    merged = merged.merge(df_whois.drop(columns=['label'], errors='ignore'), on='url', how='left')
+    combined_file = "vm_data/master/phishing_features_master.csv"
+
+    # Download existing combined and accumulate
     try:
-        s3.download_file(S3_BUCKET, "master/phishing_features_master.csv", master_file)
-        df_existing = pd.read_csv(master_file)
-        print(f"📊 Existing master dataset: {len(df_existing)} rows")
-        has_existing = True
-    except Exception as e:
-        print(f"ℹ️  No existing master dataset - this is the first run")
-        has_existing = False
+        s3.download_file(S3_BUCKET, "master/phishing_features_master.csv", combined_file)
+        df_existing_combined = pd.read_csv(combined_file)
+        df_combined_all = pd.concat([df_existing_combined, merged], ignore_index=True)
+        df_combined_all = df_combined_all.drop_duplicates(subset=['url'], keep='last')
+    except:
+        df_combined_all = merged
 
-    # Step 6: Accumulate (append + deduplicate)
-    print("\n" + "=" * 60)
-    print("STEP 6: Accumulate dataset")
-    print("=" * 60)
-
-    if has_existing:
-        print(f"📊 New batch: {len(merged)} rows")
-
-        # Combine and deduplicate
-        df_combined = pd.concat([df_existing, merged], ignore_index=True)
-        df_combined = df_combined.drop_duplicates(subset=['url'], keep='last')
-
-        added = len(df_combined) - len(df_existing)
-        duplicates = len(merged) - added
-
-        print(f"✅ Combined dataset: {len(df_combined)} rows")
-        print(f"   └─ Added: {added} new URLs")
-        print(f"   └─ Skipped: {duplicates} duplicates")
-    else:
-        df_combined = merged
-        print(f"✅ Initial dataset: {len(df_combined)} rows")
-
-    # Save updated master
-    df_combined.to_csv(master_file, index=False)
-
-    # Step 7: Upload updated master back to S3
-    print("\n" + "=" * 60)
-    print("STEP 7: Upload updated master dataset to S3")
-    print("=" * 60)
-
-    s3.upload_file(master_file, S3_BUCKET, "master/phishing_features_master.csv")
-
-    print(f"✅ Uploaded master dataset to S3 ({len(df_combined)} rows)")
+    df_combined_all.to_csv(combined_file, index=False)
+    s3.upload_file(combined_file, S3_BUCKET, "master/phishing_features_master.csv")
+    print(f"✅ Uploaded combined master (backwards compat): {len(df_combined_all)} rows")
 
     print("\n" + "=" * 60)
-    print("✅ COMPLETE: Feature extraction and accumulation finished!")
+    print("✅ COMPLETE: THREE separate feature masters created!")
     print("=" * 60)
-    print(f"Final dataset size: {len(df_combined)} rows × {len(df_combined.columns)} columns")
+    print(f"URL master:   {len(masters['url']['combined'])} rows")
+    print(f"DNS master:   {len(masters['dns']['combined'])} rows")
+    print(f"WHOIS master: {len(masters['whois']['combined'])} rows")
 
 
 if __name__ == "__main__":

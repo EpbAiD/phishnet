@@ -202,94 +202,96 @@ jobs:
             aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
 
             # ------------------------------------------------------------
-            # STEP 7: Download updated master and train models
+            # STEP 7: Download THREE SEPARATE master files (clean feature separation)
             # ------------------------------------------------------------
             echo ""
-            echo "📥 Step 7: Downloading updated master..."
-            aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
+            echo "📥 Step 7: Downloading THREE SEPARATE master datasets..."
 
-            AFTER_COUNT=$(tail -n +2 data/processed/phishing_features_complete.csv | wc -l | tr -d ' ')
-            NEW_ADDED=$((AFTER_COUNT - BEFORE_COUNT))
-            echo "   Master now has $AFTER_COUNT URLs (+$NEW_ADDED new)"
+            # Download each master file separately - ensures clean feature separation
+            aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv data/processed/url_features_master.csv 2>/dev/null || {
+              echo "   Creating new URL master"
+              echo "url,label" > data/processed/url_features_master.csv
+            }
+            aws s3 cp s3://${{ env.S3_BUCKET }}/master/dns_features_master.csv data/processed/dns_features_master.csv 2>/dev/null || {
+              echo "   Creating new DNS master"
+              echo "url,label" > data/processed/dns_features_master.csv
+            }
+            aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv data/processed/whois_features_master.csv 2>/dev/null || {
+              echo "   Creating new WHOIS master"
+              echo "url,label" > data/processed/whois_features_master.csv
+            }
+
+            URL_COUNT=$(tail -n +2 data/processed/url_features_master.csv 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            DNS_COUNT=$(tail -n +2 data/processed/dns_features_master.csv 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            WHOIS_COUNT=$(tail -n +2 data/processed/whois_features_master.csv 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            AFTER_COUNT=$URL_COUNT
+
+            echo "   URL master:   $URL_COUNT rows"
+            echo "   DNS master:   $DNS_COUNT rows"
+            echo "   WHOIS master: $WHOIS_COUNT rows"
+
+            NEW_ADDED=$((URL_COUNT - BEFORE_COUNT))
+            echo "   New URLs added: +$NEW_ADDED"
 
             echo ""
-            echo "🏋️ Step 8: Preparing SEPARATE model-ready datasets (URL, DNS, WHOIS)..."
+            echo "🏋️ Step 8: Preparing model-ready datasets from SEPARATE masters..."
             python3 << 'EOFPY'
           import pandas as pd
           import numpy as np
 
-          df = pd.read_csv('data/processed/phishing_features_complete.csv')
-          print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
+          # Process EACH master file SEPARATELY - no feature mixing!
+          masters = {
+              'url': 'data/processed/url_features_master.csv',
+              'dns': 'data/processed/dns_features_master.csv',
+              'whois': 'data/processed/whois_features_master.csv'
+          }
 
-          # Encode labels
-          if 'label' in df.columns:
-              df['label_encoded'] = (df['label'] == 'phishing').astype(int)
-          elif 'label_encoded' not in df.columns:
-              df['label_encoded'] = 0
+          for feature_type, master_path in masters.items():
+              print(f"\n--- Processing {feature_type.upper()} master ---")
 
-          # Convert all object/string columns to numeric using factorize
-          for col in df.columns:
-              if df[col].dtype == 'object' and col not in ['url', 'label']:
-                  df[col] = df[col].fillna('MISSING')
-                  df[col], _ = pd.factorize(df[col])
-
-          # Define SEPARATE feature groups from ORIGINAL extractors
-          # URL features (39) - from url_features.py
-          url_features = [
-              'url_length', 'hostname_length', 'path_length', 'num_subdomains', 'num_dots',
-              'num_special_chars', 'num_digits', 'num_uppercase_chars', 'has_at_symbol',
-              'has_double_slash_redirect', 'has_dash_in_domain', 'is_ip_address', 'ip_category',
-              'has_encoded_chars', 'has_non_ascii_chars', 'url_entropy', 'hostname_entropy',
-              'digit_to_letter_ratio', 'domain_quality', 'tld_length', 'subdomain_entropy',
-              'subdomain_length', 'has_login_keyword', 'has_suspicious_words', 'has_brand_mismatch',
-              'file_type', 'is_file_download', 'is_script_file', 'is_shortened', 'num_fragments',
-              'num_query_params', 'num_directories', 'port', 'is_risky_port', 'protocol_mismatch',
-              'is_unknown_port', 'contains_hex_encoding', 'starts_with_https_but_contains_http',
-              'missing_hostname_flag'
-          ]
-
-          # DNS features (31) - from dns_ipwhois.py
-          dns_features = [
-              'domain', 'has_A', 'num_A', 'has_AAAA', 'num_AAAA', 'has_MX', 'num_MX',
-              'has_NS', 'num_NS', 'has_TXT', 'num_TXT', 'has_CNAME', 'cname_chain_length',
-              'has_SOA', 'ttl_min', 'ttl_max', 'ttl_mean', 'ttl_var', 'mx_priority_min',
-              'mx_priority_max', 'num_distinct_ips', 'txt_entropy', 'has_SPF', 'has_DKIM',
-              'has_DMARC', 'has_wildcard_dns', 'dnssec_enabled', 'asn_list', 'asn_org_list',
-              'asn_country_list', 'cidr_list', 'error_type'
-          ]
-
-          # WHOIS features (12) - from whois.py
-          whois_features = [
-              'registrar', 'whois_server', 'creation_date', 'expiration_date', 'updated_date',
-              'domain_age_days', 'registration_length_days', 'status', 'registrant_country',
-              'has_privacy_protection', 'whois_success', 'error_msg'
-          ]
-
-          # Filter to columns that exist
-          url_cols = [c for c in url_features if c in df.columns]
-          dns_cols = [c for c in dns_features if c in df.columns]
-          whois_cols = [c for c in whois_features if c in df.columns]
-
-          print(f"Features found: URL={len(url_cols)}, DNS={len(dns_cols)}, WHOIS={len(whois_cols)}")
-
-          # Create SEPARATE model-ready files for each feature type
-          # Save BOTH formats: _imputed (for training) and _modelready (for test_ensemble_combinations)
-          for name, cols in [('url', url_cols), ('dns', dns_cols), ('whois', whois_cols)]:
-              if not cols:
-                  print(f"  WARNING: No {name.upper()} features found")
+              try:
+                  df = pd.read_csv(master_path)
+              except Exception as e:
+                  print(f"  ⚠️ Could not load {master_path}: {e}")
                   continue
 
-              # Version for training (with label_encoded)
-              df_train = df[cols + ['label_encoded']].copy().fillna(0)
-              df_train.to_csv(f'data/processed/{name}_features_modelready_imputed.csv', index=False)
+              if len(df) < 2:
+                  print(f"  ⚠️ {feature_type.upper()} master too small ({len(df)} rows), skipping")
+                  continue
 
-              # Version for test_ensemble_combinations.py (with url and label columns)
+              print(f"  Loaded {len(df)} rows, {len(df.columns)} columns")
+
+              # Encode labels
+              if 'label' in df.columns:
+                  df['label_encoded'] = df['label'].apply(lambda x: 1 if str(x).lower() == 'phishing' else 0)
+              elif 'label_encoded' not in df.columns:
+                  print(f"  ⚠️ No label column found")
+                  continue
+
+              # Get feature columns (exclude metadata columns)
+              exclude_cols = ['url', 'label', 'label_encoded', 'domain', 'collected_at', 'bucket']
+              feature_cols = [c for c in df.columns if c not in exclude_cols]
+
+              # Convert object columns to numeric
+              for col in feature_cols:
+                  if df[col].dtype == 'object':
+                      df[col] = df[col].fillna('MISSING')
+                      df[col], _ = pd.factorize(df[col])
+
+              print(f"  Feature columns: {len(feature_cols)}")
+              print(f"  Sample features: {feature_cols[:5]}...")
+
+              # Save for training (features + label_encoded)
+              df_train = df[feature_cols + ['label_encoded']].copy().fillna(0)
+              df_train.to_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv', index=False)
+
+              # Save for test_ensemble_combinations (url + features + label)
               if 'url' in df.columns:
-                  df_test = df[['url'] + cols + ['label_encoded']].copy().fillna(0)
+                  df_test = df[['url'] + feature_cols + ['label_encoded']].copy().fillna(0)
                   df_test = df_test.rename(columns={'label_encoded': 'label'})
-                  df_test.to_csv(f'data/processed/{name}_features_modelready.csv', index=False)
+                  df_test.to_csv(f'data/processed/{feature_type}_features_modelready.csv', index=False)
 
-              print(f"  Saved {name}_features_modelready.csv with {len(cols)} features")
+              print(f"  ✅ Saved {feature_type}_features_modelready.csv with {len(feature_cols)} features")
           EOFPY
 
             echo ""
