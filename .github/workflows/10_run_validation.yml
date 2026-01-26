@@ -488,6 +488,106 @@ jobs:
           echo "Results saved to: $RESULTS_FILE"
           cat $RESULTS_FILE
 
+      # ================================================================
+      # Upload trained models to S3 for deployment workflow
+      # ================================================================
+      - name: Upload models to S3
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║           UPLOADING TRAINED MODELS TO S3                     ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+
+          # Upload all trained models (.pkl files)
+          aws s3 sync models/ s3://${{ env.S3_BUCKET }}/models/ \
+            --include "*.pkl" \
+            --include "*.json" \
+            --exclude "*_feature_cols.pkl"
+
+          # Upload feature column files separately (needed for inference)
+          aws s3 sync models/ s3://${{ env.S3_BUCKET }}/models/ \
+            --include "*_feature_cols.pkl"
+
+          echo ""
+          echo "📦 Uploaded models:"
+          aws s3 ls s3://${{ env.S3_BUCKET }}/models/ | head -30
+
+          # Create production metadata from best ensemble
+          LATEST_ENSEMBLE=$(ls -t analysis/ensemble_comparison/comparison_*.json 2>/dev/null | head -1)
+          if [ -n "$LATEST_ENSEMBLE" ]; then
+            echo ""
+            echo "📋 Creating production_metadata.json from best ensemble..."
+            python3 << EOFPY
+          import json
+
+          # Load ensemble comparison results
+          with open('$LATEST_ENSEMBLE') as f:
+              results = json.load(f)
+
+          if results and isinstance(results, list):
+              best = results[0]
+
+              # Extract model names from the best ensemble
+              # Format: "url_catboost + dns_lightgbm + whois_random_forest (0.4/0.3/0.3)"
+              name = best.get('name', '')
+
+              # Parse model names
+              url_model = 'catboost'  # default
+              dns_model = 'catboost'  # default
+              whois_model = 'catboost'  # default
+
+              if 'url_' in name:
+                  parts = name.split(' + ')
+                  for part in parts:
+                      if part.startswith('url_'):
+                          url_model = part.replace('url_', '').strip()
+                      elif part.startswith('dns_'):
+                          dns_model = part.replace('dns_', '').strip()
+                      elif part.startswith('whois_'):
+                          # Remove weight info
+                          whois_part = part.split(' (')[0] if ' (' in part else part
+                          whois_model = whois_part.replace('whois_', '').strip()
+
+              metadata = {
+                  'url_model': url_model,
+                  'dns_model': dns_model,
+                  'whois_model': whois_model,
+                  'ensemble_name': name,
+                  'accuracy': best.get('accuracy', 0),
+                  'f1_score': best.get('f1_score', 0),
+                  'roc_auc': best.get('roc_auc', 0),
+                  'weights': best.get('weights', [0.4, 0.3, 0.3])
+              }
+
+              with open('models/production_metadata.json', 'w') as f:
+                  json.dump(metadata, f, indent=2)
+
+              print(f"✅ Created production_metadata.json:")
+              print(f"   URL model: {url_model}")
+              print(f"   DNS model: {dns_model}")
+              print(f"   WHOIS model: {whois_model}")
+              print(f"   Accuracy: {best.get('accuracy', 0):.4f}")
+              print(f"   F1 Score: {best.get('f1_score', 0):.4f}")
+          else:
+              print("⚠️ No ensemble results found, using defaults")
+              metadata = {
+                  'url_model': 'catboost',
+                  'dns_model': 'catboost',
+                  'whois_model': 'catboost'
+              }
+              with open('models/production_metadata.json', 'w') as f:
+                  json.dump(metadata, f, indent=2)
+          EOFPY
+
+            # Upload production metadata
+            aws s3 cp models/production_metadata.json s3://${{ env.S3_BUCKET }}/models/
+            echo "✅ Uploaded production_metadata.json to S3"
+          fi
+
+          echo ""
+          echo "✅ Models ready for deployment workflow!"
+          echo "   Run 'Deploy Models to Production' workflow to deploy."
+
       - name: Upload validation results
         uses: actions/upload-artifact@v4
         with:
@@ -496,4 +596,5 @@ jobs:
             analysis/validation_runs/
             analysis/ensemble_comparison/
             models/training_results.json
+            models/production_metadata.json
           retention-days: 30
