@@ -192,8 +192,124 @@ def load_training_data_as_test():
     }
 
 
+def measure_single_url_latency(model, X_single):
+    """
+    Measure latency for predicting a SINGLE URL (realistic user scenario).
+    Runs multiple iterations to get stable measurement.
+    """
+    import time
+
+    # Warm up the model
+    if hasattr(model, "predict_proba"):
+        _ = model.predict_proba(X_single)
+    else:
+        _ = model.decision_function(X_single)
+
+    # Measure over multiple iterations
+    n_iterations = 100
+    latencies = []
+
+    for _ in range(n_iterations):
+        start = time.perf_counter()
+        if hasattr(model, "predict_proba"):
+            _ = model.predict_proba(X_single)
+        else:
+            _ = model.decision_function(X_single)
+        latencies.append((time.perf_counter() - start) * 1000)  # ms
+
+    return {
+        "mean_ms": np.mean(latencies),
+        "p95_ms": np.percentile(latencies, 95),
+        "p99_ms": np.percentile(latencies, 99)
+    }
+
+
+def test_ensemble_combination_with_cv(
+    url_model_name, dns_model_name, whois_model_name,
+    cv_results, weights, test_data
+):
+    """
+    Test ensemble using CV metrics for accuracy (unbiased) and
+    single-URL latency for realistic performance measurement.
+
+    Args:
+        url_model_name, dns_model_name, whois_model_name: Model names
+        cv_results: Dict with CV results DataFrames for each type
+        weights: Dict with ensemble weights
+        test_data: Dict with single sample for latency testing
+
+    Returns:
+        Dict with metrics from CV + single-URL latency
+    """
+    # Get CV metrics for each model (these are unbiased estimates)
+    url_cv = cv_results['url']
+    dns_cv = cv_results['dns']
+    whois_cv = cv_results['whois']
+
+    url_metrics = url_cv[url_cv['model'] == url_model_name].iloc[0]
+    dns_metrics = dns_cv[dns_cv['model'] == dns_model_name].iloc[0]
+    whois_metrics = whois_cv[whois_cv['model'] == whois_model_name].iloc[0]
+
+    # Weighted ensemble CV metrics (estimated)
+    ensemble_roc = (
+        weights["url"] * url_metrics['roc_auc'] +
+        weights["dns"] * dns_metrics['roc_auc'] +
+        weights["whois"] * whois_metrics['roc_auc']
+    )
+    ensemble_acc = (
+        weights["url"] * url_metrics['accuracy'] +
+        weights["dns"] * dns_metrics['accuracy'] +
+        weights["whois"] * whois_metrics['accuracy']
+    )
+    ensemble_f1 = (
+        weights["url"] * url_metrics['f1'] +
+        weights["dns"] * dns_metrics['f1'] +
+        weights["whois"] * whois_metrics['f1']
+    )
+
+    # Load models for latency testing
+    url_model = load_model("url", url_model_name)
+    dns_model = load_model("dns", dns_model_name)
+    whois_model = load_model("whois", whois_model_name)
+
+    if not all([url_model, dns_model, whois_model]):
+        return None
+
+    # Measure SINGLE URL latency (realistic user scenario)
+    url_X_single = test_data["url"][0].iloc[[0]]  # Single row
+    dns_X_single = test_data["dns"][0].iloc[[0]]
+    whois_X_single = test_data["whois"][0].iloc[[0]]
+
+    url_latency = measure_single_url_latency(url_model, url_X_single)
+    dns_latency = measure_single_url_latency(dns_model, dns_X_single)
+    whois_latency = measure_single_url_latency(whois_model, whois_X_single)
+
+    # Total per-URL latency (all 3 models sequential)
+    total_latency_mean = url_latency['mean_ms'] + dns_latency['mean_ms'] + whois_latency['mean_ms']
+    total_latency_p95 = url_latency['p95_ms'] + dns_latency['p95_ms'] + whois_latency['p95_ms']
+
+    # Tradeoff score: higher accuracy, lower latency is better
+    # Using CV ROC-AUC as primary metric, latency as secondary
+    tradeoff_score = ensemble_roc - (0.3 * (total_latency_mean / 1000))
+
+    return {
+        "url_roc": url_metrics['roc_auc'],
+        "dns_roc": dns_metrics['roc_auc'],
+        "whois_roc": whois_metrics['roc_auc'],
+        "ensemble_roc_auc": ensemble_roc,
+        "ensemble_accuracy": ensemble_acc,
+        "ensemble_f1": ensemble_f1,
+        "url_latency_ms": url_latency['mean_ms'],
+        "dns_latency_ms": dns_latency['mean_ms'],
+        "whois_latency_ms": whois_latency['mean_ms'],
+        "total_latency_mean_ms": total_latency_mean,
+        "total_latency_p95_ms": total_latency_p95,
+        "tradeoff_score": tradeoff_score
+    }
+
+
 def predict_with_timing(model, X):
-    """Predict with timing measurement."""
+    """Predict with timing measurement (for batch processing)."""
     start = time.time()
 
     if hasattr(model, "predict_proba"):
@@ -213,16 +329,8 @@ def test_ensemble_combination(
     test_data, weights, sample_size=1000
 ):
     """
-    Test a specific ensemble combination.
-
-    Args:
-        url_model, dns_model, whois_model: Trained models
-        test_data: Dict with test data for each type
-        weights: Dict with ensemble weights
-        sample_size: Number of samples to test (for latency measurement)
-
-    Returns:
-        Dict with metrics: accuracy, f1, roc_auc, latency, tradeoff_score
+    Test a specific ensemble combination (legacy batch method).
+    For accurate metrics, use test_ensemble_combination_with_cv instead.
     """
     url_X, url_y = test_data["url"]
     dns_X, dns_y = test_data["dns"]
@@ -259,8 +367,6 @@ def test_ensemble_combination(
     avg_latency_per_url = total_latency / len(url_X_sample) * 1000  # ms
 
     # Tradeoff score: higher accuracy, lower latency is better
-    # Normalize: accuracy [0-1], latency [0-5000ms typical]
-    # Weight accuracy more heavily (latency weight = 0.3)
     tradeoff_score = accuracy - (0.3 * (avg_latency_per_url / 1000))
 
     return {
@@ -274,57 +380,64 @@ def test_ensemble_combination(
 
 def main():
     print("="*80)
-    print("ENSEMBLE COMBINATION TESTING")
+    print("ENSEMBLE COMBINATION TESTING (CV Metrics + Single-URL Latency)")
     print("="*80)
 
-    # Load CV results to get best models
-    print("\nLoading CV results to identify best models...")
+    # Load CV results to get best models and their UNBIASED metrics
+    print("\nLoading CV results (unbiased metrics from 5-fold cross-validation)...")
 
     url_results = pd.read_csv(f"{ANALYSIS_DIR}/url_cv_results.csv")
     dns_results = pd.read_csv(f"{ANALYSIS_DIR}/dns_cv_results.csv")
     whois_results = pd.read_csv(f"{ANALYSIS_DIR}/whois_cv_results.csv")
+
+    cv_results = {
+        'url': url_results,
+        'dns': dns_results,
+        'whois': whois_results
+    }
+
+    # Display individual model statistics
+    print("\n" + "="*80)
+    print("INDIVIDUAL MODEL STATISTICS (from 5-fold CV)")
+    print("="*80)
+
+    for feature_type, df in cv_results.items():
+        print(f"\n{feature_type.upper()} Models:")
+        print("-" * 60)
+        for _, row in df.iterrows():
+            print(f"  {row['model']:20s} ROC={row['roc_auc']:.4f} ACC={row['accuracy']:.4f} F1={row['f1']:.4f}")
 
     # Get top 3 models for each type
     url_top = url_results.nlargest(3, "roc_auc")["model"].values
     dns_top = dns_results.nlargest(3, "roc_auc")["model"].values
     whois_top = whois_results.nlargest(3, "roc_auc")["model"].values
 
-    print(f"\nTop URL models: {list(url_top)}")
-    print(f"Top DNS models: {list(dns_top)}")
-    print(f"Top WHOIS models: {list(whois_top)}")
+    print(f"\n{'='*80}")
+    print("TOP 3 MODELS PER FEATURE TYPE")
+    print("="*80)
+    print(f"URL:   {list(url_top)}")
+    print(f"DNS:   {list(dns_top)}")
+    print(f"WHOIS: {list(whois_top)}")
 
-    # Load test data
-    print("\nLoading test data...")
-    test_data = load_test_data()
-    print(f"  URL: {len(test_data['url'][0])} samples")
-    print(f"  DNS: {len(test_data['dns'][0])} samples")
-    print(f"  WHOIS: {len(test_data['whois'][0])} samples")
+    # Load test data (just for latency measurement - single sample)
+    print("\nLoading data for single-URL latency measurement...")
+    test_data = load_training_data_as_test()  # Use training data format for latency only
+    print(f"  Loaded sample data for latency benchmarking")
 
-    # Test all combinations
-    print(f"\nTesting {len(url_top) * len(dns_top) * len(whois_top) * len(WEIGHT_CONFIGS)} combinations...")
+    # Test all combinations using CV metrics + single-URL latency
+    n_combinations = len(url_top) * len(dns_top) * len(whois_top) * len(WEIGHT_CONFIGS)
+    print(f"\n{'='*80}")
+    print(f"TESTING {n_combinations} COMBINATIONS")
     print(f"  Models: {len(url_top)} URL × {len(dns_top)} DNS × {len(whois_top)} WHOIS")
     print(f"  Weight configs: {len(WEIGHT_CONFIGS)}")
+    print(f"  Metrics: CV-based (unbiased) | Latency: Single-URL (realistic)")
+    print("="*80)
 
     results = []
 
     for url_name in url_top:
-        url_model = load_model("url", url_name)
-        if not url_model:
-            print(f"  ⚠️  Skipping {url_name} (model not found)")
-            continue
-
         for dns_name in dns_top:
-            dns_model = load_model("dns", dns_name)
-            if not dns_model:
-                print(f"  ⚠️  Skipping {dns_name} (model not found)")
-                continue
-
             for whois_name in whois_top:
-                whois_model = load_model("whois", whois_name)
-                if not whois_model:
-                    print(f"  ⚠️  Skipping {whois_name} (model not found)")
-                    continue
-
                 for weights in WEIGHT_CONFIGS:
                     combo_name = f"{url_name}+{dns_name}+{whois_name}"
                     weight_str = f"U{int(weights['url']*100)}D{int(weights['dns']*100)}W{int(weights['whois']*100)}"
@@ -332,10 +445,14 @@ def main():
                     print(f"\n  Testing: {combo_name} | Weights: {weight_str}")
 
                     try:
-                        metrics = test_ensemble_combination(
-                            url_model, dns_model, whois_model,
-                            test_data, weights, sample_size=1000
+                        metrics = test_ensemble_combination_with_cv(
+                            url_name, dns_name, whois_name,
+                            cv_results, weights, test_data
                         )
+
+                        if metrics is None:
+                            print(f"    ⚠️  Skipping (model not found)")
+                            continue
 
                         result = {
                             "url_model": url_name,
@@ -348,20 +465,19 @@ def main():
                         }
                         results.append(result)
 
-                        print(f"    Accuracy: {metrics['accuracy']:.4f} ({metrics['accuracy']*100:.2f}%)")
-                        print(f"    F1 Score: {metrics['f1']:.4f}")
-                        print(f"    ROC-AUC: {metrics['roc_auc']:.4f}")
-                        print(f"    Latency: {metrics['avg_latency_ms']:.2f}ms/URL")
-                        print(f"    Tradeoff: {metrics['tradeoff_score']:.4f}")
+                        print(f"    Single-URL Latency: {metrics['total_latency_mean_ms']:.2f}ms (URL={metrics['url_latency_ms']:.2f}, DNS={metrics['dns_latency_ms']:.2f}, WHOIS={metrics['whois_latency_ms']:.2f})")
+                        print(f"    Tradeoff Score: {metrics['tradeoff_score']:.4f}")
 
                     except Exception as e:
                         print(f"    ❌ Failed: {e}")
+                        import traceback
+                        traceback.print_exc()
 
     # Save results
     if not results:
         print("\n❌ No successful ensemble combinations found!")
         print("All combinations failed. Check:")
-        print("  1. Do all three datasets have common URLs?")
+        print("  1. Are CV results available in analysis/?")
         print("  2. Are models trained and saved correctly?")
         print("  3. Check log file for detailed errors")
         exit(1)
@@ -380,11 +496,11 @@ def main():
     print("\nTop 5 Ensemble Combinations (by tradeoff score):")
     print("-" * 80)
 
-    for i, row in results_df.head(5).iterrows():
-        print(f"\n{i+1}. {row['url_model']} + {row['dns_model']} + {row['whois_model']}")
+    for idx, (_, row) in enumerate(results_df.head(5).iterrows(), 1):
+        print(f"\n{idx}. {row['url_model']} + {row['dns_model']} + {row['whois_model']}")
         print(f"   Weights: URL={row['weight_url']:.0%}, DNS={row['weight_dns']:.0%}, WHOIS={row['weight_whois']:.0%}")
-        print(f"   Accuracy: {row['accuracy']:.4f} | F1: {row['f1']:.4f} | ROC-AUC: {row['roc_auc']:.4f}")
-        print(f"   Latency: {row['avg_latency_ms']:.2f}ms | Tradeoff: {row['tradeoff_score']:.4f}")
+        print(f"   CV Metrics: ROC={row['ensemble_roc_auc']:.4f} | ACC={row['ensemble_accuracy']:.4f} | F1={row['ensemble_f1']:.4f}")
+        print(f"   Single-URL Latency: {row['total_latency_mean_ms']:.2f}ms | Tradeoff: {row['tradeoff_score']:.4f}")
 
     # Select best ensemble
     best = results_df.iloc[0]
@@ -392,16 +508,20 @@ def main():
     print(f"\n{'='*80}")
     print("BEST ENSEMBLE SELECTED")
     print(f"{'='*80}")
-    print(f"URL Model: {best['url_model']}")
-    print(f"DNS Model: {best['dns_model']}")
-    print(f"WHOIS Model: {best['whois_model']}")
+    print(f"URL Model:   {best['url_model']} (CV ROC={best['url_roc']:.4f})")
+    print(f"DNS Model:   {best['dns_model']} (CV ROC={best['dns_roc']:.4f})")
+    print(f"WHOIS Model: {best['whois_model']} (CV ROC={best['whois_roc']:.4f})")
     print(f"Weights: URL={best['weight_url']:.0%}, DNS={best['weight_dns']:.0%}, WHOIS={best['weight_whois']:.0%}")
-    print(f"\nPerformance:")
-    print(f"  Accuracy: {best['accuracy']:.4f} ({best['accuracy']*100:.2f}%)")
-    print(f"  F1 Score: {best['f1']:.4f}")
-    print(f"  ROC-AUC: {best['roc_auc']:.4f}")
-    print(f"  Avg Latency: {best['avg_latency_ms']:.2f}ms per URL")
-    print(f"  Tradeoff Score: {best['tradeoff_score']:.4f}")
+    print(f"\nPerformance (from 5-fold CV - unbiased estimates):")
+    print(f"  Ensemble ROC-AUC: {best['ensemble_roc_auc']:.4f}")
+    print(f"  Ensemble Accuracy: {best['ensemble_accuracy']:.4f} ({best['ensemble_accuracy']*100:.2f}%)")
+    print(f"  Ensemble F1 Score: {best['ensemble_f1']:.4f}")
+    print(f"\nLatency (single URL prediction - realistic):")
+    print(f"  URL Model: {best['url_latency_ms']:.2f}ms")
+    print(f"  DNS Model: {best['dns_latency_ms']:.2f}ms")
+    print(f"  WHOIS Model: {best['whois_latency_ms']:.2f}ms")
+    print(f"  Total: {best['total_latency_mean_ms']:.2f}ms (p95: {best['total_latency_p95_ms']:.2f}ms)")
+    print(f"\nTradeoff Score: {best['tradeoff_score']:.4f}")
 
     # Load existing metadata or create new
     metadata_path = f"{MODELS_DIR}/production_metadata.json"
@@ -426,13 +546,22 @@ def main():
             "dns": float(best["weight_dns"]),
             "whois": float(best["weight_whois"])
         },
-        "performance": {
-            "accuracy": float(best["accuracy"]),
-            "f1": float(best["f1"]),
-            "roc_auc": float(best["roc_auc"]),
-            "avg_latency_ms": float(best["avg_latency_ms"]),
-            "tradeoff_score": float(best["tradeoff_score"])
-        }
+        "cv_performance": {
+            "url_roc_auc": float(best["url_roc"]),
+            "dns_roc_auc": float(best["dns_roc"]),
+            "whois_roc_auc": float(best["whois_roc"]),
+            "ensemble_roc_auc": float(best["ensemble_roc_auc"]),
+            "ensemble_accuracy": float(best["ensemble_accuracy"]),
+            "ensemble_f1": float(best["ensemble_f1"])
+        },
+        "latency": {
+            "url_ms": float(best["url_latency_ms"]),
+            "dns_ms": float(best["dns_latency_ms"]),
+            "whois_ms": float(best["whois_latency_ms"]),
+            "total_mean_ms": float(best["total_latency_mean_ms"]),
+            "total_p95_ms": float(best["total_latency_p95_ms"])
+        },
+        "tradeoff_score": float(best["tradeoff_score"])
     }
 
     # Save updated metadata
