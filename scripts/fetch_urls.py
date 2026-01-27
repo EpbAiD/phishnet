@@ -316,48 +316,57 @@ def fetch_urls(output_file: str, target_count: int = 1000):
         ]
 
         legit_urls = []
-        # Use attempt-based offset to get different legitimate URLs each retry
-        legit_offset = (attempt - 1) * legit_needed
+        import random
 
-        idx = 0
-        for domain in legit_domains:
-            # Add root domain
-            if idx >= legit_offset and len(legit_urls) < legit_needed:
-                legit_urls.append({'url': f'https://{domain}', 'label': 'legitimate', 'source': 'known_good'})
-            idx += 1
+        # Seed for reproducibility within run but variation across runs
+        random.seed(int(datetime.now().timestamp()) + attempt)
 
-            # Add www subdomain
-            if idx >= legit_offset and len(legit_urls) < legit_needed:
-                legit_urls.append({'url': f'https://www.{domain}', 'label': 'legitimate', 'source': 'known_good'})
-            idx += 1
+        # Shuffle domains for variety
+        shuffled_domains = random.sample(legit_domains, len(legit_domains))
 
-            # Add common paths
-            for path in ['/about', '/contact', '/products', '/services', '/pricing']:
-                if idx >= legit_offset and len(legit_urls) < legit_needed:
-                    legit_urls.append({'url': f'https://{domain}{path}', 'label': 'legitimate', 'source': 'known_good'})
-                idx += 1
+        # Common paths to add variety
+        common_paths = ['', '/about', '/contact', '/help', '/support', '/faq', '/terms', '/privacy']
 
+        for domain in shuffled_domains:
             if len(legit_urls) >= legit_needed:
                 break
 
-        print(f"  ✓ Generated {len(legit_urls)} legitimate URLs (offset: {legit_offset})")
+            # Add root URL
+            legit_urls.append({'url': f'https://{domain}', 'label': 'legitimate', 'source': 'known_good'})
 
-        # Combine all URLs from this round
-        all_urls = df_phishing.to_dict('records') + legit_urls
+            # Add www variant
+            if len(legit_urls) < legit_needed:
+                legit_urls.append({'url': f'https://www.{domain}', 'label': 'legitimate', 'source': 'known_good'})
 
-        # Deduplication
-        df_round = pd.DataFrame(all_urls)
-        df_round = df_round.drop_duplicates(subset=['url'])
+            # Add some path variations
+            for path in random.sample(common_paths, min(3, len(common_paths))):
+                if len(legit_urls) >= legit_needed:
+                    break
+                if path:  # Skip empty path (already added root)
+                    legit_urls.append({'url': f'https://{domain}{path}', 'label': 'legitimate', 'source': 'known_good'})
 
-        # Filter out URLs that already exist in master dataset OR already collected
+        print(f"  ✓ Generated {len(legit_urls)} legitimate URLs")
+
+        # IMPORTANT: Only deduplicate PHISHING URLs against master
+        # Legitimate URLs can repeat across batches (they're known-good domains)
+        # This prevents the class imbalance bug where all legit URLs get filtered
+
+        # 1. Filter phishing URLs only (remove duplicates from master)
         existing_and_collected = existing_urls | set([u['url'] for u in collected_new_urls])
-        before_count = len(df_round)
-        df_round = df_round[~df_round['url'].isin(existing_and_collected)]
-        removed_count = before_count - len(df_round)
+        phishing_before = len(df_phishing)
+        df_phishing_new = df_phishing[~df_phishing['url'].isin(existing_and_collected)]
+        phishing_removed = phishing_before - len(df_phishing_new)
+
+        # 2. For legitimate URLs, only dedupe within this batch (not against master)
+        df_legit = pd.DataFrame(legit_urls)
+        df_legit = df_legit.drop_duplicates(subset=['url'])
+
+        # 3. Combine: new phishing + all legitimate
+        df_round = pd.concat([df_phishing_new, df_legit], ignore_index=True)
 
         print()
-        print(f"🔄 Removed {removed_count} duplicates from this round")
-        print(f"   {len(df_round)} NEW urls from this round")
+        print(f"🔄 Removed {phishing_removed} duplicate phishing URLs")
+        print(f"   {len(df_phishing_new)} NEW phishing urls + {len(df_legit)} legitimate urls = {len(df_round)} total")
 
         # Add new URLs to collected list
         collected_new_urls.extend(df_round.to_dict('records'))
