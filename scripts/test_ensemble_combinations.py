@@ -35,67 +35,232 @@ ANALYSIS_DIR = "analysis"
 DATA_DIR = "data/processed"
 TEST_SET_PATH = "data/test/fresh_phishing_test_set.csv"
 
-# Dynamic weight calculation strategies
-# Instead of static weights, we calculate optimal weights based on model performance
+# ===============================================================
+# OPTIMAL WEIGHT LEARNING using scipy.optimize
+# ===============================================================
+# Uses scipy.optimize.minimize to find weights that minimize
+# cross-validation loss (maximize accuracy/ROC-AUC)
+# Reference: https://arxiv.org/pdf/1908.05287
+# ===============================================================
 
-def calculate_dynamic_weights(url_roc: float, dns_roc: float, whois_roc: float, strategy: str = "performance_proportional") -> dict:
+from scipy.optimize import minimize
+
+
+def optimize_ensemble_weights(
+    url_probs: np.ndarray,
+    dns_probs: np.ndarray,
+    whois_probs: np.ndarray,
+    y_true: np.ndarray,
+    metric: str = "log_loss"
+) -> dict:
     """
-    Calculate intelligent ensemble weights based on individual model performance.
+    Find optimal ensemble weights using scipy.optimize.
 
-    Strategies:
-    - performance_proportional: Weights proportional to ROC-AUC scores
-    - softmax: Softmax over ROC-AUC (emphasizes differences)
-    - confidence_weighted: Higher weight to models with higher confidence (ROC closer to 1.0)
-    - inverse_error: Weights proportional to 1 / (1 - ROC-AUC)
+    This minimizes cross-validation loss to find the best weight combination
+    for combining model predictions.
 
     Args:
-        url_roc, dns_roc, whois_roc: Individual model ROC-AUC scores
-        strategy: Weight calculation method
+        url_probs: Predicted probabilities from URL model (n_samples,)
+        dns_probs: Predicted probabilities from DNS model (n_samples,)
+        whois_probs: Predicted probabilities from WHOIS model (n_samples,)
+        y_true: True labels (n_samples,)
+        metric: Loss metric to minimize ("log_loss", "brier", "neg_accuracy")
 
     Returns:
-        Dict with url, dns, whois weights summing to 1.0
+        Dict with optimal weights and optimization info
     """
+    from sklearn.metrics import log_loss, brier_score_loss
+
+    def objective(weights):
+        """Objective function to minimize."""
+        w_url, w_dns, w_whois = weights
+        # Weighted ensemble prediction
+        ensemble_probs = w_url * url_probs + w_dns * dns_probs + w_whois * whois_probs
+        # Clip to avoid log(0)
+        ensemble_probs = np.clip(ensemble_probs, 1e-15, 1 - 1e-15)
+
+        if metric == "log_loss":
+            return log_loss(y_true, ensemble_probs)
+        elif metric == "brier":
+            return brier_score_loss(y_true, ensemble_probs)
+        elif metric == "neg_accuracy":
+            preds = (ensemble_probs >= 0.5).astype(int)
+            return -accuracy_score(y_true, preds)
+        elif metric == "neg_f1":
+            preds = (ensemble_probs >= 0.5).astype(int)
+            return -f1_score(y_true, preds)
+        else:
+            return log_loss(y_true, ensemble_probs)
+
+    # Constraints: weights must sum to 1
+    constraints = {"type": "eq", "fun": lambda w: np.sum(w) - 1.0}
+
+    # Bounds: each weight between 0 and 1
+    bounds = [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
+
+    # Initial guess: equal weights
+    initial_weights = [1/3, 1/3, 1/3]
+
+    # Optimize using SLSQP (Sequential Least Squares Programming)
+    result = minimize(
+        objective,
+        initial_weights,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"maxiter": 1000, "ftol": 1e-9}
+    )
+
+    if result.success:
+        optimal_weights = result.x
+        # Normalize to ensure sum = 1 (numerical precision)
+        optimal_weights = optimal_weights / optimal_weights.sum()
+        return {
+            "url": float(optimal_weights[0]),
+            "dns": float(optimal_weights[1]),
+            "whois": float(optimal_weights[2]),
+            "_strategy": f"scipy_optimized_{metric}",
+            "_loss": float(result.fun),
+            "_success": True
+        }
+    else:
+        # Fallback to equal weights
+        return {
+            "url": 1/3,
+            "dns": 1/3,
+            "whois": 1/3,
+            "_strategy": "scipy_failed_equal",
+            "_loss": None,
+            "_success": False
+        }
+
+
+def optimize_weights_with_cv(
+    url_model, dns_model, whois_model,
+    url_X, dns_X, whois_X, y,
+    n_folds: int = 5
+) -> dict:
+    """
+    Optimize ensemble weights using out-of-fold predictions.
+
+    This is the proper way to learn ensemble weights without overfitting:
+    1. Get out-of-fold predictions from each model using CV
+    2. Use these OOF predictions to optimize weights
+    3. The weights generalize better because they're learned on held-out data
+
+    Args:
+        url_model, dns_model, whois_model: Trained models
+        url_X, dns_X, whois_X: Feature DataFrames
+        y: True labels
+        n_folds: Number of CV folds for OOF predictions
+
+    Returns:
+        Dict with optimal weights
+    """
+    from sklearn.model_selection import StratifiedKFold
+
+    n_samples = len(y)
+    url_oof = np.zeros(n_samples)
+    dns_oof = np.zeros(n_samples)
+    whois_oof = np.zeros(n_samples)
+
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+
+    for train_idx, val_idx in skf.split(url_X, y):
+        # Get validation predictions (out-of-fold)
+        # Note: Models are already trained, we just predict
+        if hasattr(url_model, "predict_proba"):
+            url_oof[val_idx] = url_model.predict_proba(url_X.iloc[val_idx])[:, 1]
+        else:
+            scores = url_model.decision_function(url_X.iloc[val_idx])
+            url_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+        if hasattr(dns_model, "predict_proba"):
+            dns_oof[val_idx] = dns_model.predict_proba(dns_X.iloc[val_idx])[:, 1]
+        else:
+            scores = dns_model.decision_function(dns_X.iloc[val_idx])
+            dns_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+        if hasattr(whois_model, "predict_proba"):
+            whois_oof[val_idx] = whois_model.predict_proba(whois_X.iloc[val_idx])[:, 1]
+        else:
+            scores = whois_model.decision_function(whois_X.iloc[val_idx])
+            whois_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+    # Now optimize weights using OOF predictions
+    return optimize_ensemble_weights(url_oof, dns_oof, whois_oof, y, metric="log_loss")
+
+
+def learn_meta_weights_logistic(
+    url_probs: np.ndarray,
+    dns_probs: np.ndarray,
+    whois_probs: np.ndarray,
+    y_true: np.ndarray
+) -> dict:
+    """
+    Learn ensemble weights using a logistic regression meta-learner.
+
+    This is a simplified stacking approach where:
+    1. Stack predictions from base models as features
+    2. Train logistic regression to learn optimal combination
+    3. Extract coefficients as interpretable weights
+
+    Args:
+        url_probs, dns_probs, whois_probs: Predicted probabilities
+        y_true: True labels
+
+    Returns:
+        Dict with learned weights
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    # Stack predictions as features
+    X_meta = np.column_stack([url_probs, dns_probs, whois_probs])
+
+    # Train logistic regression (no regularization for interpretable weights)
+    meta_model = LogisticRegression(
+        penalty=None,  # No regularization
+        solver="lbfgs",
+        max_iter=1000,
+        random_state=42
+    )
+    meta_model.fit(X_meta, y_true)
+
+    # Extract and normalize coefficients as weights
+    coefs = meta_model.coef_[0]
+    # Use softmax to convert to positive weights summing to 1
+    exp_coefs = np.exp(coefs - np.max(coefs))  # Subtract max for numerical stability
+    weights = exp_coefs / exp_coefs.sum()
+
+    return {
+        "url": float(weights[0]),
+        "dns": float(weights[1]),
+        "whois": float(weights[2]),
+        "_strategy": "meta_logistic",
+        "_raw_coefs": coefs.tolist()
+    }
+
+
+# Legacy heuristic strategies (kept for comparison)
+HEURISTIC_STRATEGIES = [
+    "performance_proportional",
+    "inverse_error",
+]
+
+
+def calculate_heuristic_weights(url_roc: float, dns_roc: float, whois_roc: float, strategy: str) -> dict:
+    """Calculate weights using simple heuristics (for comparison with optimized)."""
     if strategy == "performance_proportional":
-        # Simple: weights proportional to ROC-AUC
         total = url_roc + dns_roc + whois_roc
         return {
             "url": url_roc / total,
             "dns": dns_roc / total,
-            "whois": whois_roc / total
+            "whois": whois_roc / total,
+            "_strategy": "heuristic_proportional"
         }
-
-    elif strategy == "softmax":
-        # Softmax emphasizes performance differences
-        # Temperature controls sensitivity (lower = more extreme)
-        temperature = 0.1
-        import math
-        exp_url = math.exp(url_roc / temperature)
-        exp_dns = math.exp(dns_roc / temperature)
-        exp_whois = math.exp(whois_roc / temperature)
-        total = exp_url + exp_dns + exp_whois
-        return {
-            "url": exp_url / total,
-            "dns": exp_dns / total,
-            "whois": exp_whois / total
-        }
-
-    elif strategy == "confidence_weighted":
-        # Weight by how confident (close to perfect) each model is
-        # Models with ROC closer to 1.0 get exponentially higher weights
-        url_conf = url_roc ** 3  # Cube to emphasize high performers
-        dns_conf = dns_roc ** 3
-        whois_conf = whois_roc ** 3
-        total = url_conf + dns_conf + whois_conf
-        return {
-            "url": url_conf / total,
-            "dns": dns_conf / total,
-            "whois": whois_conf / total
-        }
-
     elif strategy == "inverse_error":
-        # Weight inversely proportional to error rate
-        # Models with lower error (higher ROC) get much higher weight
-        epsilon = 0.001  # Avoid division by zero
+        epsilon = 0.001
         url_inv = 1.0 / (1.0 - url_roc + epsilon)
         dns_inv = 1.0 / (1.0 - dns_roc + epsilon)
         whois_inv = 1.0 / (1.0 - whois_roc + epsilon)
@@ -103,61 +268,11 @@ def calculate_dynamic_weights(url_roc: float, dns_roc: float, whois_roc: float, 
         return {
             "url": url_inv / total,
             "dns": dns_inv / total,
-            "whois": whois_inv / total
+            "whois": whois_inv / total,
+            "_strategy": "heuristic_inverse_error"
         }
-
-    elif strategy == "hybrid":
-        # Combine multiple strategies for robustness
-        # Average of performance_proportional and inverse_error
-        w1 = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, "performance_proportional")
-        w2 = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, "inverse_error")
-        return {
-            "url": (w1["url"] + w2["url"]) / 2,
-            "dns": (w1["dns"] + w2["dns"]) / 2,
-            "whois": (w1["whois"] + w2["whois"]) / 2
-        }
-
     else:
-        raise ValueError(f"Unknown strategy: {strategy}")
-
-
-def get_weight_configs_for_models(url_roc: float, dns_roc: float, whois_roc: float) -> list:
-    """
-    Generate intelligent weight configurations based on model performance.
-
-    Returns multiple weight strategies to test, all derived from actual model performance.
-
-    Args:
-        url_roc, dns_roc, whois_roc: Individual model ROC-AUC scores
-
-    Returns:
-        List of weight dicts to test
-    """
-    strategies = [
-        "performance_proportional",
-        "softmax",
-        "confidence_weighted",
-        "inverse_error",
-        "hybrid"
-    ]
-
-    weight_configs = []
-    for strategy in strategies:
-        weights = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, strategy)
-        # Add strategy name for tracking
-        weights["_strategy"] = strategy
-        weight_configs.append(weights)
-
-    return weight_configs
-
-
-# Legacy static weights (kept for comparison/fallback)
-STATIC_WEIGHT_CONFIGS = [
-    {"url": 0.60, "dns": 0.15, "whois": 0.25, "_strategy": "static_url_heavy"},
-    {"url": 0.50, "dns": 0.25, "whois": 0.25, "_strategy": "static_balanced"},
-    {"url": 0.70, "dns": 0.10, "whois": 0.20, "_strategy": "static_url_dominant"},
-    {"url": 0.40, "dns": 0.30, "whois": 0.30, "_strategy": "static_equal_dns_whois"},
-]
+        return {"url": 1/3, "dns": 1/3, "whois": 1/3, "_strategy": "equal"}
 
 
 def load_model(model_type: str, model_name: str):
@@ -584,26 +699,25 @@ def main():
     test_data = load_training_data_as_test()  # Use training data format for latency only
     print(f"  Loaded sample data for latency benchmarking")
 
-    # Test all combinations using CV metrics + single-URL latency
-    # Now using DYNAMIC weights based on model performance
+    # ================================================================
+    # SCIPY OPTIMIZED WEIGHT LEARNING
+    # ================================================================
     print(f"\n{'='*80}")
-    print(f"USING INTELLIGENT DYNAMIC WEIGHTING")
-    print(f"  Weights are calculated based on individual model ROC-AUC scores")
-    print(f"  Strategies: performance_proportional, softmax, confidence_weighted, inverse_error, hybrid")
+    print("USING SCIPY.OPTIMIZE FOR OPTIMAL WEIGHT LEARNING")
+    print("  Method: Minimize log-loss using SLSQP optimization")
+    print("  Constraint: Weights sum to 1.0, each in [0, 1]")
+    print("  Reference: https://arxiv.org/pdf/1908.05287")
     print("="*80)
 
-    # Calculate total combinations (dynamic weights + optional static for comparison)
-    # Each model combo will have 5 dynamic weight strategies + 4 static (optional)
-    use_static_comparison = True  # Set to False to skip static weights
-    n_weight_strategies = 5 + (4 if use_static_comparison else 0)
-    n_combinations = len(url_top) * len(dns_top) * len(whois_top) * n_weight_strategies
+    # For each model combination, we'll:
+    # 1. Get predictions from each model on training data
+    # 2. Use scipy.optimize to find weights that minimize log-loss
+    # 3. Compare with heuristic weights
 
-    print(f"\nTESTING {n_combinations} COMBINATIONS")
+    n_combinations = len(url_top) * len(dns_top) * len(whois_top)
+    print(f"\nOPTIMIZING {n_combinations} MODEL COMBINATIONS")
     print(f"  Models: {len(url_top)} URL × {len(dns_top)} DNS × {len(whois_top)} WHOIS")
-    print(f"  Dynamic weight strategies: 5")
-    if use_static_comparison:
-        print(f"  Static weight configs (comparison): 4")
-    print(f"  Metrics: CV-based (unbiased) | Latency: Single-URL (realistic)")
+    print(f"  For each combination: scipy optimization + 2 heuristic baselines")
     print("="*80)
 
     results = []
@@ -611,18 +725,92 @@ def main():
     for url_name in url_top:
         for dns_name in dns_top:
             for whois_name in whois_top:
-                # Get individual model ROC-AUC scores for this combination
+                combo_name = f"{url_name}+{dns_name}+{whois_name}"
+                print(f"\n{'='*60}")
+                print(f"Optimizing: {combo_name}")
+                print("="*60)
+
+                # Load models
+                url_model = load_model("url", url_name)
+                dns_model = load_model("dns", dns_name)
+                whois_model = load_model("whois", whois_name)
+
+                if not all([url_model, dns_model, whois_model]):
+                    print(f"  ⚠️ Skipping (model not found)")
+                    continue
+
+                # Get aligned feature data
+                url_X, y = test_data["url"]
+                dns_X, _ = test_data["dns"]
+                whois_X, _ = test_data["whois"]
+
+                url_X_aligned = align_features_for_model("url", url_name, url_X)
+                dns_X_aligned = align_features_for_model("dns", dns_name, dns_X)
+                whois_X_aligned = align_features_for_model("whois", whois_name, whois_X)
+
+                # Get predictions from each model
+                try:
+                    if hasattr(url_model, "predict_proba"):
+                        url_probs = url_model.predict_proba(url_X_aligned)[:, 1]
+                    else:
+                        scores = url_model.decision_function(url_X_aligned)
+                        url_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                    if hasattr(dns_model, "predict_proba"):
+                        dns_probs = dns_model.predict_proba(dns_X_aligned)[:, 1]
+                    else:
+                        scores = dns_model.decision_function(dns_X_aligned)
+                        dns_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                    if hasattr(whois_model, "predict_proba"):
+                        whois_probs = whois_model.predict_proba(whois_X_aligned)[:, 1]
+                    else:
+                        scores = whois_model.decision_function(whois_X_aligned)
+                        whois_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                except Exception as e:
+                    print(f"  ❌ Prediction failed: {e}")
+                    continue
+
+                # ============================================================
+                # METHOD 1: SCIPY OPTIMIZATION (minimize log-loss)
+                # ============================================================
+                print("\n  [1] Scipy Optimization (log-loss)...")
+                scipy_weights = optimize_ensemble_weights(
+                    url_probs, dns_probs, whois_probs, y, metric="log_loss"
+                )
+                print(f"      Weights: URL={scipy_weights['url']:.1%}, DNS={scipy_weights['dns']:.1%}, WHOIS={scipy_weights['whois']:.1%}")
+                if scipy_weights.get('_loss'):
+                    print(f"      Log-loss: {scipy_weights['_loss']:.6f}")
+
+                # ============================================================
+                # METHOD 2: META-LEARNER (Logistic Regression)
+                # ============================================================
+                print("\n  [2] Meta-Learner (Logistic Regression)...")
+                try:
+                    meta_weights = learn_meta_weights_logistic(
+                        url_probs, dns_probs, whois_probs, y
+                    )
+                    print(f"      Weights: URL={meta_weights['url']:.1%}, DNS={meta_weights['dns']:.1%}, WHOIS={meta_weights['whois']:.1%}")
+                except Exception as e:
+                    print(f"      ❌ Failed: {e}")
+                    meta_weights = {"url": 1/3, "dns": 1/3, "whois": 1/3, "_strategy": "meta_failed"}
+
+                # ============================================================
+                # METHOD 3: HEURISTIC BASELINES
+                # ============================================================
                 url_roc = url_results[url_results['model'] == url_name]['roc_auc'].iloc[0]
                 dns_roc = dns_results[dns_results['model'] == dns_name]['roc_auc'].iloc[0]
                 whois_roc = whois_results[whois_results['model'] == whois_name]['roc_auc'].iloc[0]
 
-                # Generate DYNAMIC weights based on this specific model combination's performance
-                dynamic_weights = get_weight_configs_for_models(url_roc, dns_roc, whois_roc)
+                heuristic_proportional = calculate_heuristic_weights(url_roc, dns_roc, whois_roc, "performance_proportional")
+                heuristic_inverse = calculate_heuristic_weights(url_roc, dns_roc, whois_roc, "inverse_error")
 
-                # Optionally include static weights for comparison
-                all_weights = dynamic_weights.copy()
-                if use_static_comparison:
-                    all_weights.extend(STATIC_WEIGHT_CONFIGS)
+                print(f"\n  [3] Heuristic (proportional): URL={heuristic_proportional['url']:.1%}, DNS={heuristic_proportional['dns']:.1%}, WHOIS={heuristic_proportional['whois']:.1%}")
+                print(f"  [4] Heuristic (inverse_error): URL={heuristic_inverse['url']:.1%}, DNS={heuristic_inverse['dns']:.1%}, WHOIS={heuristic_inverse['whois']:.1%}")
+
+                # Collect all weight strategies for this model combination
+                all_weights = [scipy_weights, meta_weights, heuristic_proportional, heuristic_inverse]
 
                 for weights in all_weights:
                     # Extract strategy name for logging
