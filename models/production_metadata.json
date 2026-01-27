@@ -1,5 +1,31 @@
 {
-  "url_model": "catboost",
-  "dns_model": "catboost",
-  "whois_model": "catboost"
+  "ensemble": {
+    "selected_at": "2026-01-25T19:40:31.710002",
+    "models": {
+      "url": "catboost",
+      "dns": "logreg_elasticnet",
+      "whois": "rf"
+    },
+    "weights": {
+      "url": 0.7,
+      "dns": 0.1,
+      "whois": 0.2
+    },
+    "cv_performance": {
+      "url_roc_auc": 0.99962,
+      "dns_roc_auc": 1.0,
+      "whois_roc_auc": 0.9,
+      "ensemble_roc_auc": 0.979734,
+      "ensemble_accuracy": 0.9458,
+      "ensemble_f1": 0.9568932184453445
+    },
+    "latency": {
+      "url_ms": 0.3338266699994108,
+      "dns_ms": 0.6384212399996159,
+      "whois_ms": 20.135588809999376,
+      "total_mean_ms": 21.107836719998403,
+      "total_p95_ms": 31.439217349999637
+    },
+    "tradeoff_score": 0.9734016489840005
+  }
 }
