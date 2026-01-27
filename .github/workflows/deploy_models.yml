@@ -137,10 +137,17 @@ jobs:
           if os.path.exists(metadata_path):
               with open(metadata_path) as f:
                   metadata = json.load(f)
+
+              # Handle both formats
+              def get_model(ft):
+                  if 'ensemble' in metadata and 'models' in metadata['ensemble']:
+                      return metadata['ensemble']['models'].get(ft, 'catboost')
+                  return metadata.get(f'{ft}_model', 'catboost')
+
               print(f"✅ Loaded production metadata")
-              print(f"   URL model: {metadata.get('url_model', 'N/A')}")
-              print(f"   DNS model: {metadata.get('dns_model', 'N/A')}")
-              print(f"   WHOIS model: {metadata.get('whois_model', 'N/A')}")
+              print(f"   URL model: {get_model('url')}")
+              print(f"   DNS model: {get_model('dns')}")
+              print(f"   WHOIS model: {get_model('whois')}")
           else:
               # Default to catboost if no metadata
               metadata = {
@@ -213,11 +220,19 @@ jobs:
           else:
               metadata = {'url_model': 'catboost', 'dns_model': 'catboost', 'whois_model': 'catboost'}
 
+          # Handle both old format (url_model) and new format (ensemble.models.url)
+          def get_model_name(metadata, feature_type):
+              # New format: ensemble.models.url
+              if 'ensemble' in metadata and 'models' in metadata['ensemble']:
+                  return metadata['ensemble']['models'].get(feature_type, 'catboost')
+              # Old format: url_model
+              return metadata.get(f'{feature_type}_model', 'catboost')
+
           print("Verifying selected models can be loaded...\n")
 
           all_good = True
           for feature_type in ['url', 'dns', 'whois']:
-              model_name = metadata.get(f'{feature_type}_model', 'catboost')
+              model_name = get_model_name(metadata, feature_type)
               model_path = f'models/{feature_type}_{model_name}.pkl'
               cols_path = f'models/{feature_type}_{model_name}_feature_cols.pkl'
 
@@ -303,11 +318,17 @@ jobs:
               with open(metadata_path) as f:
                   metadata = json.load(f)
 
+              # Handle both formats
+              def get_model(ft):
+                  if 'ensemble' in metadata and 'models' in metadata['ensemble']:
+                      return metadata['ensemble']['models'].get(ft, 'catboost')
+                  return metadata.get(f'{ft}_model', 'catboost')
+
               # Output files to add
               files_to_add = ['models/production_metadata.json']
 
               for feature_type in ['url', 'dns', 'whois']:
-                  model_name = metadata.get(f'{feature_type}_model', 'catboost')
+                  model_name = get_model(feature_type)
                   files_to_add.append(f'models/{feature_type}_{model_name}.pkl')
                   files_to_add.append(f'models/{feature_type}_{model_name}_feature_cols.pkl')
 
@@ -318,6 +339,10 @@ jobs:
 
               with open('/tmp/files_to_add.txt', 'w') as f:
                   f.write('\n'.join(files_to_add))
+
+              # Also write model names for commit message
+              with open('/tmp/model_names.txt', 'w') as f:
+                  f.write(f"{get_model('url')}\n{get_model('dns')}\n{get_model('whois')}")
 
               print("Files to commit:")
               for f in files_to_add:
@@ -339,9 +364,15 @@ jobs:
           fi
 
           # Get model info for commit message
-          URL_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('url_model','unknown'))" 2>/dev/null || echo "unknown")
-          DNS_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('dns_model','unknown'))" 2>/dev/null || echo "unknown")
-          WHOIS_MODEL=$(python3 -c "import json; m=json.load(open('models/production_metadata.json')); print(m.get('whois_model','unknown'))" 2>/dev/null || echo "unknown")
+          if [ -f "/tmp/model_names.txt" ]; then
+            URL_MODEL=$(sed -n '1p' /tmp/model_names.txt)
+            DNS_MODEL=$(sed -n '2p' /tmp/model_names.txt)
+            WHOIS_MODEL=$(sed -n '3p' /tmp/model_names.txt)
+          else
+            URL_MODEL="unknown"
+            DNS_MODEL="unknown"
+            WHOIS_MODEL="unknown"
+          fi
 
           git commit -m "Deploy production models
 
