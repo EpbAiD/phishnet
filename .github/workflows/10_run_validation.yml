@@ -185,7 +185,14 @@ jobs:
 
             echo ""
             echo "🔍 Step 6: Extracting DNS/WHOIS features on EC2..."
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/ec2_key ec2-user@$EC2_IP << EOFEC2
+            # SSH with keepalive to prevent broken pipe during long operations
+            ssh -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ServerAliveInterval=30 \
+                -o ServerAliveCountMax=10 \
+                -o TCPKeepAlive=yes \
+                -o ConnectTimeout=60 \
+                -i ~/.ssh/ec2_key ec2-user@$EC2_IP << EOFEC2
               cd /home/ec2-user/phishnet
 
               # Update the extraction script from S3
