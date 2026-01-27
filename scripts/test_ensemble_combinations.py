@@ -35,12 +35,128 @@ ANALYSIS_DIR = "analysis"
 DATA_DIR = "data/processed"
 TEST_SET_PATH = "data/test/fresh_phishing_test_set.csv"
 
-# Ensemble weights to test
-WEIGHT_CONFIGS = [
-    {"url": 0.60, "dns": 0.15, "whois": 0.25},  # URL-heavy (current)
-    {"url": 0.50, "dns": 0.25, "whois": 0.25},  # Balanced
-    {"url": 0.70, "dns": 0.10, "whois": 0.20},  # URL-dominant
-    {"url": 0.40, "dns": 0.30, "whois": 0.30},  # Equal DNS/WHOIS
+# Dynamic weight calculation strategies
+# Instead of static weights, we calculate optimal weights based on model performance
+
+def calculate_dynamic_weights(url_roc: float, dns_roc: float, whois_roc: float, strategy: str = "performance_proportional") -> dict:
+    """
+    Calculate intelligent ensemble weights based on individual model performance.
+
+    Strategies:
+    - performance_proportional: Weights proportional to ROC-AUC scores
+    - softmax: Softmax over ROC-AUC (emphasizes differences)
+    - confidence_weighted: Higher weight to models with higher confidence (ROC closer to 1.0)
+    - inverse_error: Weights proportional to 1 / (1 - ROC-AUC)
+
+    Args:
+        url_roc, dns_roc, whois_roc: Individual model ROC-AUC scores
+        strategy: Weight calculation method
+
+    Returns:
+        Dict with url, dns, whois weights summing to 1.0
+    """
+    if strategy == "performance_proportional":
+        # Simple: weights proportional to ROC-AUC
+        total = url_roc + dns_roc + whois_roc
+        return {
+            "url": url_roc / total,
+            "dns": dns_roc / total,
+            "whois": whois_roc / total
+        }
+
+    elif strategy == "softmax":
+        # Softmax emphasizes performance differences
+        # Temperature controls sensitivity (lower = more extreme)
+        temperature = 0.1
+        import math
+        exp_url = math.exp(url_roc / temperature)
+        exp_dns = math.exp(dns_roc / temperature)
+        exp_whois = math.exp(whois_roc / temperature)
+        total = exp_url + exp_dns + exp_whois
+        return {
+            "url": exp_url / total,
+            "dns": exp_dns / total,
+            "whois": exp_whois / total
+        }
+
+    elif strategy == "confidence_weighted":
+        # Weight by how confident (close to perfect) each model is
+        # Models with ROC closer to 1.0 get exponentially higher weights
+        url_conf = url_roc ** 3  # Cube to emphasize high performers
+        dns_conf = dns_roc ** 3
+        whois_conf = whois_roc ** 3
+        total = url_conf + dns_conf + whois_conf
+        return {
+            "url": url_conf / total,
+            "dns": dns_conf / total,
+            "whois": whois_conf / total
+        }
+
+    elif strategy == "inverse_error":
+        # Weight inversely proportional to error rate
+        # Models with lower error (higher ROC) get much higher weight
+        epsilon = 0.001  # Avoid division by zero
+        url_inv = 1.0 / (1.0 - url_roc + epsilon)
+        dns_inv = 1.0 / (1.0 - dns_roc + epsilon)
+        whois_inv = 1.0 / (1.0 - whois_roc + epsilon)
+        total = url_inv + dns_inv + whois_inv
+        return {
+            "url": url_inv / total,
+            "dns": dns_inv / total,
+            "whois": whois_inv / total
+        }
+
+    elif strategy == "hybrid":
+        # Combine multiple strategies for robustness
+        # Average of performance_proportional and inverse_error
+        w1 = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, "performance_proportional")
+        w2 = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, "inverse_error")
+        return {
+            "url": (w1["url"] + w2["url"]) / 2,
+            "dns": (w1["dns"] + w2["dns"]) / 2,
+            "whois": (w1["whois"] + w2["whois"]) / 2
+        }
+
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+
+def get_weight_configs_for_models(url_roc: float, dns_roc: float, whois_roc: float) -> list:
+    """
+    Generate intelligent weight configurations based on model performance.
+
+    Returns multiple weight strategies to test, all derived from actual model performance.
+
+    Args:
+        url_roc, dns_roc, whois_roc: Individual model ROC-AUC scores
+
+    Returns:
+        List of weight dicts to test
+    """
+    strategies = [
+        "performance_proportional",
+        "softmax",
+        "confidence_weighted",
+        "inverse_error",
+        "hybrid"
+    ]
+
+    weight_configs = []
+    for strategy in strategies:
+        weights = calculate_dynamic_weights(url_roc, dns_roc, whois_roc, strategy)
+        # Add strategy name for tracking
+        weights["_strategy"] = strategy
+        weight_configs.append(weights)
+
+    return weight_configs
+
+
+# Legacy static weights (kept for comparison/fallback)
+STATIC_WEIGHT_CONFIGS = [
+    {"url": 0.60, "dns": 0.15, "whois": 0.25, "_strategy": "static_url_heavy"},
+    {"url": 0.50, "dns": 0.25, "whois": 0.25, "_strategy": "static_balanced"},
+    {"url": 0.70, "dns": 0.10, "whois": 0.20, "_strategy": "static_url_dominant"},
+    {"url": 0.40, "dns": 0.30, "whois": 0.30, "_strategy": "static_equal_dns_whois"},
 ]
 
 
@@ -469,11 +585,24 @@ def main():
     print(f"  Loaded sample data for latency benchmarking")
 
     # Test all combinations using CV metrics + single-URL latency
-    n_combinations = len(url_top) * len(dns_top) * len(whois_top) * len(WEIGHT_CONFIGS)
+    # Now using DYNAMIC weights based on model performance
     print(f"\n{'='*80}")
-    print(f"TESTING {n_combinations} COMBINATIONS")
+    print(f"USING INTELLIGENT DYNAMIC WEIGHTING")
+    print(f"  Weights are calculated based on individual model ROC-AUC scores")
+    print(f"  Strategies: performance_proportional, softmax, confidence_weighted, inverse_error, hybrid")
+    print("="*80)
+
+    # Calculate total combinations (dynamic weights + optional static for comparison)
+    # Each model combo will have 5 dynamic weight strategies + 4 static (optional)
+    use_static_comparison = True  # Set to False to skip static weights
+    n_weight_strategies = 5 + (4 if use_static_comparison else 0)
+    n_combinations = len(url_top) * len(dns_top) * len(whois_top) * n_weight_strategies
+
+    print(f"\nTESTING {n_combinations} COMBINATIONS")
     print(f"  Models: {len(url_top)} URL × {len(dns_top)} DNS × {len(whois_top)} WHOIS")
-    print(f"  Weight configs: {len(WEIGHT_CONFIGS)}")
+    print(f"  Dynamic weight strategies: 5")
+    if use_static_comparison:
+        print(f"  Static weight configs (comparison): 4")
     print(f"  Metrics: CV-based (unbiased) | Latency: Single-URL (realistic)")
     print("="*80)
 
@@ -482,16 +611,33 @@ def main():
     for url_name in url_top:
         for dns_name in dns_top:
             for whois_name in whois_top:
-                for weights in WEIGHT_CONFIGS:
-                    combo_name = f"{url_name}+{dns_name}+{whois_name}"
-                    weight_str = f"U{int(weights['url']*100)}D{int(weights['dns']*100)}W{int(weights['whois']*100)}"
+                # Get individual model ROC-AUC scores for this combination
+                url_roc = url_results[url_results['model'] == url_name]['roc_auc'].iloc[0]
+                dns_roc = dns_results[dns_results['model'] == dns_name]['roc_auc'].iloc[0]
+                whois_roc = whois_results[whois_results['model'] == whois_name]['roc_auc'].iloc[0]
 
-                    print(f"\n  Testing: {combo_name} | Weights: {weight_str}")
+                # Generate DYNAMIC weights based on this specific model combination's performance
+                dynamic_weights = get_weight_configs_for_models(url_roc, dns_roc, whois_roc)
+
+                # Optionally include static weights for comparison
+                all_weights = dynamic_weights.copy()
+                if use_static_comparison:
+                    all_weights.extend(STATIC_WEIGHT_CONFIGS)
+
+                for weights in all_weights:
+                    # Extract strategy name for logging
+                    strategy = weights.get("_strategy", "unknown")
+                    # Create clean weights dict without _strategy key
+                    clean_weights = {k: v for k, v in weights.items() if k != "_strategy"}
+                    combo_name = f"{url_name}+{dns_name}+{whois_name}"
+                    weight_str = f"U{int(clean_weights['url']*100)}D{int(clean_weights['dns']*100)}W{int(clean_weights['whois']*100)}"
+
+                    print(f"\n  Testing: {combo_name} | Strategy: {strategy} | Weights: {weight_str}")
 
                     try:
                         metrics = test_ensemble_combination_with_cv(
                             url_name, dns_name, whois_name,
-                            cv_results, weights, test_data
+                            cv_results, clean_weights, test_data
                         )
 
                         if metrics is None:
@@ -502,9 +648,10 @@ def main():
                             "url_model": url_name,
                             "dns_model": dns_name,
                             "whois_model": whois_name,
-                            "weight_url": weights["url"],
-                            "weight_dns": weights["dns"],
-                            "weight_whois": weights["whois"],
+                            "weight_strategy": strategy,
+                            "weight_url": clean_weights["url"],
+                            "weight_dns": clean_weights["dns"],
+                            "weight_whois": clean_weights["whois"],
                             **metrics
                         }
                         results.append(result)
@@ -541,8 +688,10 @@ def main():
     print("-" * 80)
 
     for idx, (_, row) in enumerate(results_df.head(5).iterrows(), 1):
+        strategy = row.get('weight_strategy', 'unknown')
         print(f"\n{idx}. {row['url_model']} + {row['dns_model']} + {row['whois_model']}")
-        print(f"   Weights: URL={row['weight_url']:.0%}, DNS={row['weight_dns']:.0%}, WHOIS={row['weight_whois']:.0%}")
+        print(f"   Strategy: {strategy}")
+        print(f"   Weights: URL={row['weight_url']:.1%}, DNS={row['weight_dns']:.1%}, WHOIS={row['weight_whois']:.1%}")
         print(f"   CV Metrics: ROC={row['ensemble_roc_auc']:.4f} | ACC={row['ensemble_accuracy']:.4f} | F1={row['ensemble_f1']:.4f}")
         print(f"   Single-URL Latency: {row['total_latency_mean_ms']:.2f}ms | Tradeoff: {row['tradeoff_score']:.4f}")
 
@@ -552,10 +701,12 @@ def main():
     print(f"\n{'='*80}")
     print("BEST ENSEMBLE SELECTED")
     print(f"{'='*80}")
+    best_strategy = best.get('weight_strategy', 'unknown')
     print(f"URL Model:   {best['url_model']} (CV ROC={best['url_roc']:.4f})")
     print(f"DNS Model:   {best['dns_model']} (CV ROC={best['dns_roc']:.4f})")
     print(f"WHOIS Model: {best['whois_model']} (CV ROC={best['whois_roc']:.4f})")
-    print(f"Weights: URL={best['weight_url']:.0%}, DNS={best['weight_dns']:.0%}, WHOIS={best['weight_whois']:.0%}")
+    print(f"Weight Strategy: {best_strategy}")
+    print(f"Weights: URL={best['weight_url']:.1%}, DNS={best['weight_dns']:.1%}, WHOIS={best['weight_whois']:.1%}")
     print(f"\nPerformance (from 5-fold CV - unbiased estimates):")
     print(f"  Ensemble ROC-AUC: {best['ensemble_roc_auc']:.4f}")
     print(f"  Ensemble Accuracy: {best['ensemble_accuracy']:.4f} ({best['ensemble_accuracy']*100:.2f}%)")
@@ -585,6 +736,7 @@ def main():
             "dns": best["dns_model"],
             "whois": best["whois_model"]
         },
+        "weight_strategy": best.get("weight_strategy", "unknown"),
         "weights": {
             "url": float(best["weight_url"]),
             "dns": float(best["weight_dns"]),
