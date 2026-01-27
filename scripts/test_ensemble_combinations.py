@@ -748,48 +748,65 @@ def main():
                 dns_X_aligned = align_features_for_model("dns", dns_name, dns_X)
                 whois_X_aligned = align_features_for_model("whois", whois_name, whois_X)
 
-                # Get predictions from each model
+                # ============================================================
+                # IMPORTANT: Use OUT-OF-FOLD predictions for weight optimization
+                # This prevents overfitting the weights to training data
+                # ============================================================
+                from sklearn.model_selection import StratifiedKFold
+
+                n_samples = len(y)
+                url_oof = np.zeros(n_samples)
+                dns_oof = np.zeros(n_samples)
+                whois_oof = np.zeros(n_samples)
+
+                print("\n  Computing out-of-fold predictions for weight optimization...")
+                skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
                 try:
-                    if hasattr(url_model, "predict_proba"):
-                        url_probs = url_model.predict_proba(url_X_aligned)[:, 1]
-                    else:
-                        scores = url_model.decision_function(url_X_aligned)
-                        url_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+                    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(url_X_aligned, y)):
+                        # Get validation (OOF) predictions - model predicts on data it hasn't seen
+                        if hasattr(url_model, "predict_proba"):
+                            url_oof[val_idx] = url_model.predict_proba(url_X_aligned.iloc[val_idx])[:, 1]
+                        else:
+                            scores = url_model.decision_function(url_X_aligned.iloc[val_idx])
+                            url_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
 
-                    if hasattr(dns_model, "predict_proba"):
-                        dns_probs = dns_model.predict_proba(dns_X_aligned)[:, 1]
-                    else:
-                        scores = dns_model.decision_function(dns_X_aligned)
-                        dns_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+                        if hasattr(dns_model, "predict_proba"):
+                            dns_oof[val_idx] = dns_model.predict_proba(dns_X_aligned.iloc[val_idx])[:, 1]
+                        else:
+                            scores = dns_model.decision_function(dns_X_aligned.iloc[val_idx])
+                            dns_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
 
-                    if hasattr(whois_model, "predict_proba"):
-                        whois_probs = whois_model.predict_proba(whois_X_aligned)[:, 1]
-                    else:
-                        scores = whois_model.decision_function(whois_X_aligned)
-                        whois_probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+                        if hasattr(whois_model, "predict_proba"):
+                            whois_oof[val_idx] = whois_model.predict_proba(whois_X_aligned.iloc[val_idx])[:, 1]
+                        else:
+                            scores = whois_model.decision_function(whois_X_aligned.iloc[val_idx])
+                            whois_oof[val_idx] = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                    print(f"      ✓ OOF predictions computed (5-fold CV)")
 
                 except Exception as e:
-                    print(f"  ❌ Prediction failed: {e}")
+                    print(f"  ❌ OOF prediction failed: {e}")
                     continue
 
                 # ============================================================
-                # METHOD 1: SCIPY OPTIMIZATION (minimize log-loss)
+                # METHOD 1: SCIPY OPTIMIZATION using OOF predictions
                 # ============================================================
-                print("\n  [1] Scipy Optimization (log-loss)...")
+                print("\n  [1] Scipy Optimization (log-loss on OOF predictions)...")
                 scipy_weights = optimize_ensemble_weights(
-                    url_probs, dns_probs, whois_probs, y, metric="log_loss"
+                    url_oof, dns_oof, whois_oof, y, metric="log_loss"
                 )
                 print(f"      Weights: URL={scipy_weights['url']:.1%}, DNS={scipy_weights['dns']:.1%}, WHOIS={scipy_weights['whois']:.1%}")
                 if scipy_weights.get('_loss'):
                     print(f"      Log-loss: {scipy_weights['_loss']:.6f}")
 
                 # ============================================================
-                # METHOD 2: META-LEARNER (Logistic Regression)
+                # METHOD 2: META-LEARNER using OOF predictions
                 # ============================================================
-                print("\n  [2] Meta-Learner (Logistic Regression)...")
+                print("\n  [2] Meta-Learner (Logistic Regression on OOF predictions)...")
                 try:
                     meta_weights = learn_meta_weights_logistic(
-                        url_probs, dns_probs, whois_probs, y
+                        url_oof, dns_oof, whois_oof, y
                     )
                     print(f"      Weights: URL={meta_weights['url']:.1%}, DNS={meta_weights['dns']:.1%}, WHOIS={meta_weights['whois']:.1%}")
                 except Exception as e:
