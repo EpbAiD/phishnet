@@ -1,0 +1,222 @@
+name: Deploy EC2 Daemon
+
+# Deploys the 24/7 continuous collector daemon to EC2
+# Sets up systemd service for auto-restart and boot startup
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - restart
+          - stop
+          - status
+          - logs
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+
+jobs:
+  deploy-daemon:
+    name: "Deploy EC2 Daemon"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+
+      - name: Start EC2 instance
+        run: |
+          INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].State.Name' --output text)
+          echo "Current state: $INSTANCE_STATE"
+
+          if [ "$INSTANCE_STATE" = "stopped" ]; then
+            echo "Starting EC2 instance..."
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            echo "Waiting 60s for SSH..."
+            sleep 60
+          elif [ "$INSTANCE_STATE" = "running" ]; then
+            echo "Instance already running"
+            sleep 10
+          else
+            echo "Waiting for instance to be in a stable state..."
+            sleep 30
+          fi
+
+          EC2_IP=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
+          echo "EC2 IP: $EC2_IP"
+
+      - name: Deploy daemon
+        if: github.event.inputs.action == 'deploy'
+        run: |
+          echo "=============================================="
+          echo "DEPLOYING 24/7 COLLECTOR DAEMON TO EC2"
+          echo "=============================================="
+
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
+
+          echo "=== Updating code from GitHub ==="
+          cd /home/ec2-user/phishnet
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo ""
+          echo "=== Installing dependencies ==="
+          pip3.8 install --quiet boto3 pandas requests dnspython python-whois ipwhois tldextract
+
+          echo ""
+          echo "=== Creating log directory ==="
+          sudo mkdir -p /var/log/phishnet
+          sudo chown ec2-user:ec2-user /var/log/phishnet
+
+          echo ""
+          echo "=== Creating systemd service ==="
+          sudo tee /etc/systemd/system/phishnet-collector.service > /dev/null << 'EOFSVC'
+          [Unit]
+          Description=PhishNet Continuous URL Collector
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ec2-user
+          Group=ec2-user
+          WorkingDirectory=/home/ec2-user/phishnet
+          Environment="PYTHONPATH=/home/ec2-user/phishnet"
+          Environment="AWS_REGION=us-east-1"
+          Environment="S3_BUCKET=phishnet-data"
+          Environment="COLLECTION_INTERVAL=900"
+          Environment="MAX_URLS_PER_CYCLE=1000"
+          Environment="LOG_FILE=/var/log/phishnet/collector.log"
+
+          ExecStart=/usr/bin/python3.8 /home/ec2-user/phishnet/scripts/continuous_collector_daemon.py
+          ExecStop=/bin/kill -SIGTERM $MAINPID
+
+          Restart=always
+          RestartSec=60
+          StartLimitBurst=5
+          StartLimitIntervalSec=300
+
+          StandardOutput=append:/var/log/phishnet/collector.log
+          StandardError=append:/var/log/phishnet/collector.log
+
+          [Install]
+          WantedBy=multi-user.target
+          EOFSVC
+
+          echo ""
+          echo "=== Reloading systemd ==="
+          sudo systemctl daemon-reload
+
+          echo ""
+          echo "=== Enabling service ==="
+          sudo systemctl enable phishnet-collector
+
+          echo ""
+          echo "=== Starting service ==="
+          sudo systemctl restart phishnet-collector
+
+          echo ""
+          echo "=== Checking status ==="
+          sleep 5
+          sudo systemctl status phishnet-collector --no-pager || true
+
+          echo ""
+          echo "=== Recent logs ==="
+          tail -20 /var/log/phishnet/collector.log 2>/dev/null || echo "No logs yet"
+
+          echo ""
+          echo "=============================================="
+          echo "DEPLOYMENT COMPLETE!"
+          echo "=============================================="
+          EOFEC2
+
+      - name: Restart daemon
+        if: github.event.inputs.action == 'restart'
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
+          sudo systemctl restart phishnet-collector
+          sleep 3
+          sudo systemctl status phishnet-collector --no-pager
+          EOFEC2
+
+      - name: Stop daemon
+        if: github.event.inputs.action == 'stop'
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
+          sudo systemctl stop phishnet-collector
+          sudo systemctl status phishnet-collector --no-pager || true
+          EOFEC2
+
+      - name: Check status
+        if: github.event.inputs.action == 'status'
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
+          echo "=== Service Status ==="
+          sudo systemctl status phishnet-collector --no-pager || true
+
+          echo ""
+          echo "=== S3 Master Sizes ==="
+          aws s3 ls s3://phishnet-data/master/ 2>/dev/null || echo "Could not list S3"
+
+          echo ""
+          echo "=== Recent Collection Stats ==="
+          grep "Cycle completed" /var/log/phishnet/collector.log 2>/dev/null | tail -5 || echo "No cycles yet"
+          EOFEC2
+
+      - name: View logs
+        if: github.event.inputs.action == 'logs'
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
+          echo "=== Last 100 log lines ==="
+          tail -100 /var/log/phishnet/collector.log 2>/dev/null || echo "No logs"
+          EOFEC2
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "=============================================="
+          echo "EC2 DAEMON ${{ github.event.inputs.action }} COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "EC2 IP: ${{ env.EC2_IP }}"
+          echo "Action: ${{ github.event.inputs.action }}"
+          echo ""
+          echo "To check status: Run this workflow with action=status"
+          echo "To view logs: Run this workflow with action=logs"
+          echo ""
