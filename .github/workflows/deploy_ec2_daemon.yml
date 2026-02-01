@@ -83,9 +83,22 @@ jobs:
               -i ~/.ssh/ec2_key ec2-user@${{ env.EC2_IP }} << 'EOFEC2'
 
           echo "=== Updating code from GitHub ==="
-          cd /home/ec2-user/phishnet
-          git fetch origin main
-          git reset --hard origin/main
+          cd /home/ec2-user
+
+          # Clone if doesn't exist, otherwise pull
+          if [ ! -d "phishnet/.git" ]; then
+            echo "Cloning repository..."
+            rm -rf phishnet
+            git clone https://github.com/EpbAiD/phishnet.git
+          else
+            echo "Updating existing repository..."
+            cd phishnet
+            git fetch origin main
+            git reset --hard origin/main
+            cd ..
+          fi
+
+          cd phishnet
 
           echo ""
           echo "=== Installing dependencies ==="
