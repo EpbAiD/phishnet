@@ -36,8 +36,21 @@ import boto3
 from botocore.exceptions import ClientError
 import traceback
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to path - use absolute path for systemd service compatibility
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Also set PYTHONPATH for subprocess imports
+os.environ['PYTHONPATH'] = str(PROJECT_ROOT)
+
+# Verify src module is accessible
+try:
+    import src.features.url
+    print(f"[OK] Project root: {PROJECT_ROOT}")
+except ImportError as e:
+    print(f"[ERROR] Cannot import src.features.url from {PROJECT_ROOT}")
+    print(f"[ERROR] sys.path = {sys.path[:3]}")
+    print(f"[ERROR] {e}")
 
 # Configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
