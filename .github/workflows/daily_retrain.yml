@@ -1,0 +1,380 @@
+name: Daily Model Retraining
+
+# Trains models daily from continuously accumulated S3 data
+# EC2 daemon collects URLs 24/7, this workflow trains on the growing dataset
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # Daily at 9 AM EST (14:00 UTC)
+  workflow_dispatch:
+    inputs:
+      force_train:
+        description: 'Force training even if diversity check fails'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+
+jobs:
+  daily-retrain:
+    name: "Daily Model Retraining"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt boto3 pyarrow
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download master datasets from S3
+        run: |
+          echo "=============================================="
+          echo "DOWNLOADING MASTER DATASETS FROM S3"
+          echo "=============================================="
+
+          mkdir -p data/processed
+
+          # Download all three master datasets
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv \
+            data/processed/url_features_master.csv 2>/dev/null || echo "No URL master found"
+
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/dns_features_master.csv \
+            data/processed/dns_features_master.csv 2>/dev/null || echo "No DNS master found"
+
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv \
+            data/processed/whois_features_master.csv 2>/dev/null || echo "No WHOIS master found"
+
+          # Show dataset sizes
+          echo ""
+          echo "Dataset sizes:"
+          for f in data/processed/*_master.csv; do
+            if [ -f "$f" ]; then
+              rows=$(wc -l < "$f" | tr -d ' ')
+              echo "  $(basename $f): $rows rows"
+            fi
+          done
+
+      - name: Check data diversity
+        id: diversity
+        run: |
+          echo "=============================================="
+          echo "CHECKING DATA DIVERSITY"
+          echo "=============================================="
+
+          python3 << 'EOF'
+          import pandas as pd
+          import sys
+
+          # Simple diversity check
+          scores = {}
+
+          for feature_type in ['url', 'dns', 'whois']:
+              try:
+                  df = pd.read_csv(f'data/processed/{feature_type}_features_master.csv')
+
+                  # Calculate basic diversity metrics
+                  total_rows = len(df)
+
+                  if 'label' in df.columns:
+                      phishing = (df['label'] == 'phishing').sum() if df['label'].dtype == 'object' else (df['label'] == 1).sum()
+                      balance = min(phishing, total_rows - phishing) / max(total_rows, 1) * 2 * 100
+                  else:
+                      balance = 50  # Assume balanced if no label
+
+                  # Simple score based on size and balance
+                  size_score = min(total_rows / 5000, 1.0) * 50  # Max 50 points for size
+                  balance_score = balance  # Max 100 points for balance (50% = 100)
+
+                  scores[feature_type] = {
+                      'total': total_rows,
+                      'balance': balance,
+                      'score': (size_score + balance_score / 2)
+                  }
+
+                  print(f"{feature_type.upper()}: {total_rows} rows, {balance:.1f}% balance, score: {scores[feature_type]['score']:.1f}")
+
+              except Exception as e:
+                  print(f"{feature_type.upper()}: Error - {e}")
+                  scores[feature_type] = {'total': 0, 'balance': 0, 'score': 0}
+
+          # Overall score
+          overall = sum(s['score'] for s in scores.values()) / len(scores) if scores else 0
+          print(f"\nOverall diversity score: {overall:.1f}/100")
+
+          # Decision
+          min_score = 30  # Minimum score to proceed
+          if overall < min_score:
+              print(f"\n⚠️ Diversity score below {min_score}, training may not be effective")
+              with open('DIVERSITY_LOW', 'w') as f:
+                  f.write(str(overall))
+          else:
+              print(f"\n✅ Diversity score OK, proceeding with training")
+          EOF
+
+          if [ -f "DIVERSITY_LOW" ] && [ "${{ github.event.inputs.force_train }}" != "true" ]; then
+            echo "diversity_ok=false" >> $GITHUB_OUTPUT
+          else
+            echo "diversity_ok=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare model-ready datasets
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "PREPARING MODEL-READY DATASETS"
+          echo "=============================================="
+
+          python3 << 'EOF'
+          import pandas as pd
+          import numpy as np
+
+          for feature_type in ['url', 'dns', 'whois']:
+              print(f"\n--- Processing {feature_type.upper()} ---")
+
+              try:
+                  df = pd.read_csv(f'data/processed/{feature_type}_features_master.csv')
+              except Exception as e:
+                  print(f"  ⚠️ Could not load: {e}")
+                  continue
+
+              if len(df) < 10:
+                  print(f"  ⚠️ Too few rows ({len(df)}), skipping")
+                  continue
+
+              print(f"  Loaded {len(df)} rows")
+
+              # Encode labels
+              if 'label' in df.columns:
+                  if df['label'].dtype == 'object':
+                      df['label_encoded'] = df['label'].apply(lambda x: 1 if str(x).lower() == 'phishing' else 0)
+                  else:
+                      df['label_encoded'] = df['label']
+              else:
+                  print(f"  ⚠️ No label column")
+                  continue
+
+              # Get feature columns
+              exclude = ['url', 'label', 'label_encoded', 'domain', 'collected_at', 'source', 'bucket']
+              feature_cols = [c for c in df.columns if c not in exclude]
+
+              # Convert object columns to numeric
+              for col in feature_cols:
+                  if df[col].dtype == 'object':
+                      df[col] = df[col].fillna('MISSING')
+                      df[col], _ = pd.factorize(df[col])
+
+              # Save
+              df_train = df[feature_cols + ['label_encoded']].copy().fillna(0)
+              df_train.to_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv', index=False)
+
+              if 'url' in df.columns:
+                  df_test = df[['url'] + feature_cols + ['label_encoded']].copy().fillna(0)
+                  df_test = df_test.rename(columns={'label_encoded': 'label'})
+                  df_test.to_csv(f'data/processed/{feature_type}_features_modelready.csv', index=False)
+
+              print(f"  ✅ Saved with {len(feature_cols)} features")
+          EOF
+
+      - name: Train 45 models (15 per feature type)
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "TRAINING 45 MODELS WITH 5-FOLD CV"
+          echo "=============================================="
+
+          mkdir -p models analysis
+
+          python3 << 'EOF'
+          import pandas as pd
+          import numpy as np
+          from sklearn.model_selection import StratifiedKFold
+          from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
+          from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, ExtraTreesClassifier, BaggingClassifier
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.tree import DecisionTreeClassifier
+          from sklearn.neighbors import KNeighborsClassifier
+          from sklearn.naive_bayes import GaussianNB
+          from sklearn.svm import SVC
+          from sklearn.neural_network import MLPClassifier
+          from catboost import CatBoostClassifier
+          from lightgbm import LGBMClassifier
+          from xgboost import XGBClassifier
+          import joblib
+          import json
+          import copy
+          import warnings
+          warnings.filterwarnings('ignore')
+
+          models = {
+              'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+              'gradient_boost': GradientBoostingClassifier(n_estimators=100, random_state=42),
+              'adaboost': AdaBoostClassifier(n_estimators=100, random_state=42, algorithm='SAMME'),
+              'logistic': LogisticRegression(max_iter=1000, random_state=42),
+              'decision_tree': DecisionTreeClassifier(random_state=42),
+              'knn': KNeighborsClassifier(n_neighbors=5),
+              'naive_bayes': GaussianNB(),
+              'svm': SVC(probability=True, random_state=42),
+              'mlp': MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42),
+              'catboost': CatBoostClassifier(iterations=100, random_state=42, verbose=0),
+              'lightgbm': LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
+              'xgboost': XGBClassifier(n_estimators=100, random_state=42, verbosity=0),
+              'extra_trees': ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+              'bagging': BaggingClassifier(n_estimators=50, random_state=42),
+              'voting_base': RandomForestClassifier(n_estimators=50, random_state=42),
+          }
+
+          skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+          all_results = {}
+
+          for feature_type in ['url', 'dns', 'whois']:
+              print(f"\n{'='*60}")
+              print(f"Training {feature_type.upper()} models")
+              print(f"{'='*60}")
+
+              try:
+                  df = pd.read_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv')
+              except FileNotFoundError:
+                  print(f"  Skipping {feature_type} - no data")
+                  continue
+
+              X = df.drop('label_encoded', axis=1)
+              y = df['label_encoded'].values
+
+              print(f"  {len(X)} samples, {len(X.columns)} features")
+
+              if len(np.unique(y)) < 2:
+                  print(f"  Skipping - only one class")
+                  continue
+
+              results = []
+
+              for name, model_template in models.items():
+                  fold_rocs = []
+
+                  try:
+                      for train_idx, val_idx in skf.split(X, y):
+                          model = copy.deepcopy(model_template)
+                          model.fit(X.iloc[train_idx], y[train_idx])
+
+                          if hasattr(model, 'predict_proba'):
+                              probs = model.predict_proba(X.iloc[val_idx])[:, 1]
+                          else:
+                              scores = model.decision_function(X.iloc[val_idx])
+                              probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-12)
+
+                          fold_rocs.append(roc_auc_score(y[val_idx], probs))
+
+                      mean_roc = np.mean(fold_rocs)
+                      results.append({'model': name, 'roc_auc': mean_roc})
+
+                      # Train final model on all data
+                      final_model = copy.deepcopy(model_template)
+                      final_model.fit(X, y)
+                      joblib.dump(final_model, f'models/{feature_type}_{name}.pkl')
+                      joblib.dump(list(X.columns), f'models/{feature_type}_{name}_feature_cols.pkl')
+
+                      print(f"    {name}: ROC={mean_roc:.4f}")
+
+                  except Exception as e:
+                      print(f"    {name}: FAILED - {e}")
+
+              if results:
+                  results_df = pd.DataFrame(results).sort_values('roc_auc', ascending=False)
+                  results_df.to_csv(f'analysis/{feature_type}_cv_results.csv', index=False)
+                  all_results[feature_type] = results
+
+          print("\n✅ Model training complete!")
+          EOF
+
+      - name: Test ensemble combinations
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "TESTING ENSEMBLE COMBINATIONS"
+          echo "=============================================="
+
+          python3 scripts/test_ensemble_combinations.py || echo "Ensemble testing completed with warnings"
+
+      - name: Upload models to S3
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "UPLOADING MODELS TO S3"
+          echo "=============================================="
+
+          # Add timestamp to production metadata
+          python3 << 'EOF'
+          import json
+          from datetime import datetime
+
+          try:
+              with open('models/production_metadata.json', 'r') as f:
+                  metadata = json.load(f)
+          except:
+              metadata = {}
+
+          metadata['last_trained'] = datetime.now().isoformat()
+          metadata['training_run'] = '${{ github.run_id }}'
+
+          with open('models/production_metadata.json', 'w') as f:
+              json.dump(metadata, f, indent=2)
+          EOF
+
+          # Upload all models
+          aws s3 sync models/ s3://${{ env.S3_BUCKET }}/models/ \
+            --include "*.pkl" \
+            --include "*.json"
+
+          echo ""
+          echo "Uploaded models:"
+          aws s3 ls s3://${{ env.S3_BUCKET }}/models/ | head -20
+
+          echo ""
+          echo "Production metadata:"
+          cat models/production_metadata.json
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "=============================================="
+          echo "DAILY RETRAINING COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "Timestamp: $(date)"
+          echo "Run ID: ${{ github.run_id }}"
+          echo ""
+
+          if [ "${{ steps.diversity.outputs.diversity_ok }}" == "true" ]; then
+            echo "✅ Models trained and uploaded to S3"
+            echo "   The production API will hot-reload new models automatically"
+          else
+            echo "⚠️ Training skipped due to low diversity score"
+            echo "   Set force_train=true to override"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-retrain-${{ github.run_id }}
+          path: |
+            analysis/
+            models/production_metadata.json
+          retention-days: 7

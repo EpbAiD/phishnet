@@ -3,19 +3,26 @@
 # FastAPI app for URL-only phishing prediction
 # ---------------------------------------------------------------
 # - Normalizes incomplete URLs (e.g., "youtube.com" → "https://youtube.com")
-# - /health : simple health check
+# - /health : simple health check with model version info
 # - /predict/url : takes URL, returns P(phishing) + label
 # - /feedback : submit user corrections for model improvement
+# - HOT RELOAD: Automatically reloads models from S3 when updated
 # ===============================================================
 import sys, os
+import asyncio
+import json
+import logging
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+import boto3
+from botocore.exceptions import ClientError
 
 from src.api.schemas import (
     URLPredictRequest,
@@ -35,7 +42,7 @@ from src.api.predict_utils import (
     predict_dns_risk,
     predict_ensemble_risk,
 )
-from src.api.model_loader import load_url_model, load_whois_model, load_dns_model
+from src.api.model_loader import load_url_model, load_whois_model, load_dns_model, clear_model_cache
 from src.api.llm_explainer import generate_explanation
 from src.api.database import (
     get_db,
@@ -49,6 +56,27 @@ from src.api.database import (
 )
 import time
 import numpy as np
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ===============================================================
+# MODEL HOT RELOAD CONFIGURATION
+# ===============================================================
+S3_BUCKET = os.environ.get('S3_BUCKET', 'phishnet-data')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+MODEL_CHECK_INTERVAL = int(os.environ.get('MODEL_CHECK_INTERVAL', 300))  # 5 minutes
+ENABLE_HOT_RELOAD = os.environ.get('ENABLE_HOT_RELOAD', 'true').lower() == 'true'
+
+# Global state for model versioning
+model_state = {
+    'version': None,
+    'last_check': None,
+    'last_reload': None,
+    'reload_count': 0,
+    'enabled': ENABLE_HOT_RELOAD,
+}
 
 app = FastAPI(
     title="Phishing Detection API",
@@ -77,9 +105,123 @@ def normalize_input_url(raw_url: str) -> str:
     return raw_url
 
 
+# ===============================================================
+# MODEL HOT RELOAD FUNCTIONS
+# ===============================================================
+
+def get_s3_model_version() -> Optional[str]:
+    """Check S3 for the current model version (last_trained timestamp)."""
+    try:
+        s3 = boto3.client('s3', region_name=AWS_REGION)
+        response = s3.get_object(Bucket=S3_BUCKET, Key='models/production_metadata.json')
+        metadata = json.loads(response['Body'].read().decode('utf-8'))
+        return metadata.get('last_trained')
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            logger.warning("No production_metadata.json found in S3")
+            return None
+        logger.error(f"Error checking S3 model version: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error checking S3 model version: {e}")
+        return None
+
+
+def download_models_from_s3() -> bool:
+    """Download latest models from S3 to local models/ directory."""
+    try:
+        s3 = boto3.client('s3', region_name=AWS_REGION)
+        models_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
+        os.makedirs(models_dir, exist_ok=True)
+
+        # List all model files in S3
+        response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='models/')
+
+        if 'Contents' not in response:
+            logger.warning("No models found in S3")
+            return False
+
+        downloaded = 0
+        for obj in response['Contents']:
+            key = obj['Key']
+            if key.endswith('.pkl') or key.endswith('.json'):
+                filename = os.path.basename(key)
+                local_path = os.path.join(models_dir, filename)
+                s3.download_file(S3_BUCKET, key, local_path)
+                downloaded += 1
+
+        logger.info(f"Downloaded {downloaded} model files from S3")
+        return downloaded > 0
+    except Exception as e:
+        logger.error(f"Error downloading models from S3: {e}")
+        return False
+
+
+def reload_models():
+    """Clear model cache and reload models."""
+    try:
+        # Clear the model cache to force reload
+        clear_model_cache()
+
+        # Reload models
+        model, cols, thr = load_url_model()
+        logger.info(f"Reloaded URL model: {type(model).__name__} | {len(cols)} features")
+
+        model, cols, thr = load_whois_model()
+        logger.info(f"Reloaded WHOIS model: {type(model).__name__} | {len(cols)} features")
+
+        return True
+    except Exception as e:
+        logger.error(f"Error reloading models: {e}")
+        return False
+
+
+async def model_hot_reload_task():
+    """Background task to check for and load new models from S3."""
+    global model_state
+
+    logger.info(f"Starting model hot reload task (interval: {MODEL_CHECK_INTERVAL}s)")
+
+    while True:
+        try:
+            if not model_state['enabled']:
+                await asyncio.sleep(MODEL_CHECK_INTERVAL)
+                continue
+
+            model_state['last_check'] = datetime.now()
+
+            # Check S3 for new model version
+            s3_version = get_s3_model_version()
+
+            if s3_version and s3_version != model_state['version']:
+                logger.info(f"New model version detected: {model_state['version']} -> {s3_version}")
+
+                # Download new models
+                if download_models_from_s3():
+                    # Reload models into memory
+                    if reload_models():
+                        model_state['version'] = s3_version
+                        model_state['last_reload'] = datetime.now()
+                        model_state['reload_count'] += 1
+                        logger.info(f"Models reloaded successfully (version: {s3_version})")
+                    else:
+                        logger.error("Failed to reload models after download")
+                else:
+                    logger.error("Failed to download models from S3")
+            else:
+                logger.debug(f"No new models (current: {model_state['version']})")
+
+        except Exception as e:
+            logger.error(f"Error in hot reload task: {e}")
+
+        await asyncio.sleep(MODEL_CHECK_INTERVAL)
+
+
 @app.on_event("startup")
-def _startup_event():
-    """Warm model cache on server boot."""
+async def _startup_event():
+    """Warm model cache on server boot and start hot reload task."""
+    global model_state
+
     # Load URL model
     try:
         model, cols, thr = load_url_model()
@@ -100,6 +242,23 @@ def _startup_event():
     except Exception as e:
         print(f"🔥 [startup] ERROR loading WHOIS model: {e}")
 
+    # Get initial model version from S3
+    try:
+        s3_version = get_s3_model_version()
+        if s3_version:
+            model_state['version'] = s3_version
+            model_state['last_reload'] = datetime.now()
+            logger.info(f"Initial model version: {s3_version}")
+    except Exception as e:
+        logger.warning(f"Could not get initial model version from S3: {e}")
+
+    # Start hot reload background task
+    if ENABLE_HOT_RELOAD:
+        asyncio.create_task(model_hot_reload_task())
+        logger.info("Model hot reload task started")
+    else:
+        logger.info("Model hot reload disabled")
+
     # Load DNS model - COMMENTED OUT (using API from VM for live DNS data)
     # try:
     #     model, cols, thr = load_dns_model()
@@ -113,7 +272,14 @@ def _startup_event():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Health check with model version info."""
+    return {
+        "status": "ok",
+        "model_version": model_state['version'],
+        "last_reload": model_state['last_reload'].isoformat() if model_state['last_reload'] else None,
+        "reload_count": model_state['reload_count'],
+        "hot_reload_enabled": model_state['enabled'],
+    }
 
 
 @app.post("/predict/url", response_model=URLPredictResponse)
