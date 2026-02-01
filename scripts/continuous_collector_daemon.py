@@ -184,12 +184,12 @@ class ContinuousCollector:
 
     def extract_url_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Extract URL-based features."""
-        from src.features.url_features import extract_url_features
+        from src.features.url_features import extract_single_url_features
 
         features_list = []
         for _, row in df.iterrows():
             try:
-                features = extract_url_features(row['url'])
+                features = extract_single_url_features(row['url'])
                 features['url'] = row['url']
                 features['label'] = row['label']
                 features['source'] = row.get('source', 'unknown')
