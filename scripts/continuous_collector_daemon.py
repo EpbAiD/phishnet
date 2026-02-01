@@ -45,10 +45,10 @@ os.environ['PYTHONPATH'] = str(PROJECT_ROOT)
 
 # Verify src module is accessible
 try:
-    import src.features.url
+    import src.features.url_features
     print(f"[OK] Project root: {PROJECT_ROOT}")
 except ImportError as e:
-    print(f"[ERROR] Cannot import src.features.url from {PROJECT_ROOT}")
+    print(f"[ERROR] Cannot import src.features.url_features from {PROJECT_ROOT}")
     print(f"[ERROR] sys.path = {sys.path[:3]}")
     print(f"[ERROR] {e}")
 
@@ -184,7 +184,7 @@ class ContinuousCollector:
 
     def extract_url_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Extract URL-based features."""
-        from src.features.url import extract_url_features
+        from src.features.url_features import extract_url_features
 
         features_list = []
         for _, row in df.iterrows():
