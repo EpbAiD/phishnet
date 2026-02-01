@@ -117,3 +117,15 @@ def load_dns_model():
     )
 
     return _DNS_MODEL_CACHE
+
+
+def clear_model_cache():
+    """
+    Clear all model caches to force reload on next access.
+    Used by hot reload to pick up new models from disk.
+    """
+    global _URL_MODEL_CACHE, _WHOIS_MODEL_CACHE, _DNS_MODEL_CACHE
+    _URL_MODEL_CACHE = None
+    _WHOIS_MODEL_CACHE = None
+    _DNS_MODEL_CACHE = None
+    print("🔄 Model caches cleared")
