@@ -53,6 +53,8 @@ from src.api.database import (
     ScanResponse,
     FeedbackCreate,
     FeedbackResponse,
+    DB_AVAILABLE,
+    SessionLocal,
 )
 import time
 import numpy as np
@@ -282,6 +284,47 @@ def health_check():
     }
 
 
+def save_scan_to_db(
+    url: str,
+    prediction: int,
+    confidence: float,
+    url_score: float = None,
+    dns_score: float = None,
+    whois_score: float = None,
+    explanation: str = None,
+    source: str = "api"
+) -> Optional[int]:
+    """
+    Save a scan to the database and return the scan_id.
+    Returns None if database is unavailable.
+    """
+    if not DB_AVAILABLE or SessionLocal is None:
+        return None
+
+    try:
+        db = SessionLocal()
+        db_scan = Scan(
+            url=url,
+            prediction=prediction,
+            confidence=confidence,
+            url_model_score=url_score,
+            dns_model_score=dns_score,
+            whois_model_score=whois_score,
+            explanation=explanation,
+            model_version=model_state.get('version'),
+            source=source,
+        )
+        db.add(db_scan)
+        db.commit()
+        db.refresh(db_scan)
+        scan_id = db_scan.id
+        db.close()
+        return scan_id
+    except Exception as e:
+        logger.warning(f"Failed to save scan to database: {e}")
+        return None
+
+
 @app.post("/predict/url", response_model=URLPredictResponse)
 def predict_url(request: URLPredictRequest):
     """Predict phishing risk using URL features only."""
@@ -312,6 +355,16 @@ def predict_url(request: URLPredictRequest):
 
     total_latency_ms = (time.time() - t0) * 1000
 
+    # Save scan to database for feedback collection
+    scan_id = save_scan_to_db(
+        url=url,
+        prediction=1 if is_phishing else 0,
+        confidence=prob,
+        url_score=prob,
+        explanation=explanation,
+        source="api"
+    )
+
     return URLPredictResponse(
         url=url,
         risk_score=prob,
@@ -322,6 +375,7 @@ def predict_url(request: URLPredictRequest):
         explanation=explanation,
         verdict=verdict,
         confidence=confidence,
+        scan_id=scan_id,
         debug=debug,
     )
 
@@ -448,6 +502,23 @@ def predict_ensemble(request: EnsemblePredictRequest):
 
     total_latency_ms = (time.time() - t0) * 1000
 
+    # Save scan to database for feedback collection
+    # Extract individual model scores from debug if available
+    url_score = debug.get('url_prob') if debug else None
+    dns_score = debug.get('dns_prob') if debug else None
+    whois_score = debug.get('whois_prob') if debug else None
+
+    scan_id = save_scan_to_db(
+        url=url,
+        prediction=1 if is_phishing else 0,
+        confidence=prob,
+        url_score=url_score,
+        dns_score=dns_score,
+        whois_score=whois_score,
+        explanation=explanation,
+        source="api"
+    )
+
     return EnsemblePredictResponse(
         url=url,
         risk_score=prob,
@@ -458,6 +529,7 @@ def predict_ensemble(request: EnsemblePredictRequest):
         explanation=explanation,
         verdict=verdict,
         confidence=confidence,
+        scan_id=scan_id,
         debug=debug,
     )
 
@@ -658,6 +730,18 @@ def explain_prediction(request: ExplainRequest):
 
     total_latency_ms = (time.time() - t0) * 1000
 
+    # Save scan to database for feedback collection
+    scan_id = save_scan_to_db(
+        url=url,
+        prediction=1 if verdict == "phishing" else 0,
+        confidence=ensemble_prob_val,
+        url_score=url_prob if not np.isnan(url_prob) else None,
+        dns_score=dns_prob if dns_prob is not None and not np.isnan(dns_prob) else None,
+        whois_score=whois_prob if not np.isnan(whois_prob) else None,
+        explanation=layman_explanation,
+        source="api"
+    )
+
     return ExplainResponse(
         url=url,
         explanation=layman_explanation,
@@ -666,6 +750,7 @@ def explain_prediction(request: ExplainRequest):
         verdict=verdict,
         confidence=confidence,
         latency_ms=total_latency_ms,
+        scan_id=scan_id,
         shap_features=shap_features,
     )
 

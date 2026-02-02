@@ -25,6 +25,7 @@ class URLPredictResponse(BaseModel):
     explanation: str  # LLM-generated human-readable explanation (REQUIRED for trust)
     verdict: str  # "safe" or "suspicious" (user-friendly)
     confidence: str  # "high", "medium", or "low"
+    scan_id: Optional[int] = None  # Database scan ID for feedback submission
     debug: Optional[dict] = None  # optional small debug info
 
 
@@ -88,6 +89,7 @@ class EnsemblePredictResponse(BaseModel):
     explanation: str  # LLM-generated human-readable explanation (REQUIRED for trust)
     verdict: str  # "safe" or "suspicious" (user-friendly)
     confidence: str  # "high", "medium", or "low"
+    scan_id: Optional[int] = None  # Database scan ID for feedback submission
     debug: Optional[dict] = None  # includes individual model predictions
 
 
@@ -108,4 +110,5 @@ class ExplainResponse(BaseModel):
     verdict: str  # "phishing" or "legit"
     confidence: str  # "high", "medium", or "low"
     latency_ms: float  # Total latency including LLM generation
+    scan_id: Optional[int] = None  # Database scan ID for feedback submission
     shap_features: Optional[dict] = None  # Optional SHAP top features
