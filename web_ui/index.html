@@ -286,6 +286,130 @@
         .debug-content.show {
             display: block;
         }
+
+        /* Feedback UI Styles */
+        .feedback-section {
+            margin-top: 25px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .feedback-section h4 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .feedback-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .feedback-label {
+            flex: 0 0 180px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .feedback-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .feedback-btn {
+            padding: 8px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .feedback-btn:hover {
+            border-color: #667eea;
+            background: #f0f0ff;
+        }
+
+        .feedback-btn.selected {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .feedback-btn.correct {
+            border-color: #28a745;
+        }
+
+        .feedback-btn.correct.selected {
+            background: #28a745;
+            border-color: #28a745;
+        }
+
+        .feedback-btn.incorrect {
+            border-color: #dc3545;
+        }
+
+        .feedback-btn.incorrect.selected {
+            background: #dc3545;
+            border-color: #dc3545;
+        }
+
+        .feedback-comment {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .feedback-submit {
+            margin-top: 15px;
+            padding: 12px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .feedback-submit:hover {
+            background: #5568d3;
+        }
+
+        .feedback-submit:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .feedback-success {
+            padding: 15px;
+            background: #d4edda;
+            border: 1px solid #28a745;
+            border-radius: 6px;
+            color: #155724;
+            text-align: center;
+            font-weight: 500;
+        }
+
+        .feedback-error {
+            padding: 15px;
+            background: #f8d7da;
+            border: 1px solid #dc3545;
+            border-radius: 6px;
+            color: #721c24;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -350,6 +474,11 @@
         const API_BASE = 'http://localhost:8000';
         let currentMode = 'url';
         let debugData = null;
+        let currentScanId = null;  // Track scan ID for feedback
+        let feedbackState = {
+            correctLabel: null,  // null, 0 (correct), or 1 (incorrect - flip prediction)
+            explanationHelpful: null  // null, true, or false
+        };
 
         function selectMode(mode) {
             currentMode = mode;
@@ -415,6 +544,8 @@
                 }
 
                 debugData = data;
+                currentScanId = data.scan_id;  // Store scan ID for feedback
+                feedbackState = { correctLabel: null, explanationHelpful: null };  // Reset feedback state
 
             } catch (error) {
                 resultDiv.innerHTML = `
@@ -478,6 +609,7 @@
                         <span>${(data.threshold * 100).toFixed(0)}%</span>
                     </div>
                 </div>
+                ${getFeedbackHTML(data.is_phishing)}
                 <div class="debug-toggle" onclick="toggleDebug()">
                     🔍 Show Technical Details
                 </div>
@@ -521,6 +653,7 @@
                         <span>${data.latency_ms.toFixed(0)}ms</span>
                     </div>
                 </div>
+                ${getFeedbackHTML(isPhishing)}
                 <div class="debug-toggle" onclick="toggleDebug()">
                     🔍 Show Technical Details
                 </div>
@@ -533,6 +666,128 @@
         function toggleDebug() {
             const debugContent = document.getElementById('debugContent');
             debugContent.classList.toggle('show');
+        }
+
+        // Feedback UI Functions
+        function getFeedbackHTML(isPhishing) {
+            if (!currentScanId) {
+                return ''; // Don't show feedback if no scan_id (DB unavailable)
+            }
+
+            const currentPrediction = isPhishing ? 'Phishing' : 'Safe';
+            const oppositePrediction = isPhishing ? 'Safe' : 'Phishing';
+
+            return `
+                <div class="feedback-section" id="feedbackSection">
+                    <h4>📝 Help Improve Our Model</h4>
+
+                    <div class="feedback-row">
+                        <span class="feedback-label">Was this prediction correct?</span>
+                        <div class="feedback-buttons">
+                            <button class="feedback-btn correct" onclick="selectPredictionFeedback(true)" id="btnCorrect">
+                                ✓ Yes, it's ${currentPrediction}
+                            </button>
+                            <button class="feedback-btn incorrect" onclick="selectPredictionFeedback(false)" id="btnIncorrect">
+                                ✗ No, it's ${oppositePrediction}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="feedback-row">
+                        <span class="feedback-label">Was the explanation helpful?</span>
+                        <div class="feedback-buttons">
+                            <button class="feedback-btn" onclick="selectExplanationFeedback(true)" id="btnHelpful">
+                                👍 Helpful
+                            </button>
+                            <button class="feedback-btn" onclick="selectExplanationFeedback(false)" id="btnNotHelpful">
+                                👎 Not Helpful
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="feedback-row" style="flex-direction: column; align-items: stretch;">
+                        <span class="feedback-label" style="margin-bottom: 8px;">Any additional comments? (optional)</span>
+                        <textarea class="feedback-comment" id="feedbackComment" placeholder="Tell us what could be improved..."></textarea>
+                    </div>
+
+                    <button class="feedback-submit" onclick="submitFeedback()" id="submitFeedbackBtn">
+                        Submit Feedback
+                    </button>
+                </div>
+            `;
+        }
+
+        function selectPredictionFeedback(isCorrect) {
+            feedbackState.correctLabel = isCorrect ? null : (debugData.is_phishing ? 0 : 1);
+            // If correct, we don't need to change the label (null means agree with prediction)
+            // If incorrect, flip the label
+
+            document.getElementById('btnCorrect').classList.toggle('selected', isCorrect);
+            document.getElementById('btnIncorrect').classList.toggle('selected', !isCorrect);
+        }
+
+        function selectExplanationFeedback(isHelpful) {
+            feedbackState.explanationHelpful = isHelpful;
+
+            document.getElementById('btnHelpful').classList.toggle('selected', isHelpful);
+            document.getElementById('btnNotHelpful').classList.toggle('selected', !isHelpful);
+        }
+
+        async function submitFeedback() {
+            const submitBtn = document.getElementById('submitFeedbackBtn');
+            const feedbackSection = document.getElementById('feedbackSection');
+            const comment = document.getElementById('feedbackComment').value.trim();
+
+            if (!currentScanId) {
+                alert('Unable to submit feedback: No scan ID available');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            try {
+                const payload = {
+                    scan_id: currentScanId,
+                    source: 'web'
+                };
+
+                // Only include correct_label if user said prediction was wrong
+                if (feedbackState.correctLabel !== null) {
+                    payload.correct_label = feedbackState.correctLabel;
+                }
+
+                if (feedbackState.explanationHelpful !== null) {
+                    payload.explanation_helpful = feedbackState.explanationHelpful;
+                }
+
+                if (comment) {
+                    payload.explanation_comment = comment;
+                }
+
+                const response = await fetch(`${API_BASE}/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    feedbackSection.innerHTML = `
+                        <div class="feedback-success">
+                            ✅ Thank you! Your feedback helps us improve the model.
+                        </div>
+                    `;
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to submit feedback');
+                }
+            } catch (error) {
+                feedbackSection.innerHTML = `
+                    <div class="feedback-error">
+                        ❌ Failed to submit feedback: ${error.message}
+                    </div>
+                `;
+            }
         }
 
         // Check API health on load
