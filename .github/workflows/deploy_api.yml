@@ -118,8 +118,8 @@ jobs:
           sudo docker rm phishnet-api 2>/dev/null || true
 
           echo ""
-          echo "=== Building Docker image ==="
-          sudo docker build -t phishnet-api:latest .
+          echo "=== Building Docker image (no cache) ==="
+          sudo docker build --no-cache -t phishnet-api:latest .
 
           echo ""
           echo "=== Starting API container ==="
