@@ -30,45 +30,37 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: |
-            web/package-lock.json
-            extension/package-lock.json
-
-      - name: Build web interface
+      - name: Build web interface (if needed)
         run: |
-          if [ -d "web" ]; then
+          # Check if web/ has a package.json for build
+          if [ -f "web/package.json" ]; then
+            echo "📦 Building web interface with npm..."
             cd web
-            if [ -f "package.json" ]; then
-              npm ci
-              npm run build
-            else
-              echo "⚠️ No package.json found in web/, assuming static files"
-            fi
+            npm ci
+            npm run build
             cd ..
           else
-            echo "⚠️ No web/ directory found"
-            mkdir -p web
+            echo "ℹ️ No package.json in web/, using static files"
           fi
 
-      - name: Build browser extension
+          # Check web_ui/ - always static
+          if [ -d "web_ui" ]; then
+            echo "✅ Found web_ui/ directory (static files)"
+          fi
+
+      - name: Build browser extension (if needed)
         run: |
-          if [ -d "extension" ]; then
+          # Check if extension has package.json
+          if [ -f "extension/package.json" ]; then
+            echo "📦 Building extension with npm..."
             cd extension
-            if [ -f "package.json" ]; then
-              npm ci
-              npm run build
-            else
-              echo "⚠️ No package.json found in extension/, assuming static files"
-            fi
+            npm ci
+            npm run build
             cd ..
+          elif [ -d "browser_extension" ]; then
+            echo "✅ Found browser_extension/ directory (static files)"
           else
-            echo "⚠️ No extension/ directory found"
-            mkdir -p extension
+            echo "ℹ️ No extension directory found"
           fi
 
       - name: Prepare deployment directory
