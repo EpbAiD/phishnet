@@ -70,6 +70,24 @@ jobs:
           echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
           echo "EC2 IP: $EC2_IP"
 
+      - name: Open port 8000 in security group
+        if: github.event.inputs.action == 'deploy'
+        run: |
+          # Get security group ID for the instance
+          SG_ID=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)
+          echo "Security Group: $SG_ID"
+
+          # Check if port 8000 is already open
+          EXISTING=$(aws ec2 describe-security-groups --group-ids $SG_ID --query "SecurityGroups[0].IpPermissions[?FromPort==\`8000\`]" --output text)
+
+          if [ -z "$EXISTING" ]; then
+            echo "Opening port 8000..."
+            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0
+            echo "Port 8000 opened"
+          else
+            echo "Port 8000 already open"
+          fi
+
       - name: Deploy API
         if: github.event.inputs.action == 'deploy'
         run: |
