@@ -113,13 +113,15 @@ jobs:
           sudo systemctl start docker
 
           echo ""
-          echo "=== Stopping existing container (if any) ==="
+          echo "=== Stopping existing container and removing old image ==="
           sudo docker stop phishnet-api 2>/dev/null || true
           sudo docker rm phishnet-api 2>/dev/null || true
+          sudo docker rmi phishnet-api:latest 2>/dev/null || true
+          sudo docker system prune -f 2>/dev/null || true
 
           echo ""
-          echo "=== Building Docker image (no cache) ==="
-          sudo docker build --no-cache -t phishnet-api:latest .
+          echo "=== Building Docker image (fresh, no cache) ==="
+          sudo docker build --no-cache --pull -t phishnet-api:latest .
 
           echo ""
           echo "=== Starting API container ==="
