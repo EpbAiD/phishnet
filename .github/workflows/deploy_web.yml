@@ -6,7 +6,9 @@ on:
       - main
     paths:
       - 'web/**'
+      - 'web_ui/**'
       - 'extension/**'
+      - 'browser_extension/**'
       - 'docs/**'
   workflow_dispatch:
 
@@ -73,8 +75,11 @@ jobs:
         run: |
           mkdir -p _site
 
-          # Copy web interface
-          if [ -d "web/dist" ]; then
+          # Copy web interface (prefer web_ui/ over web/)
+          if [ -d "web_ui" ]; then
+            echo "📦 Copying web_ui/ (main web interface with feedback)"
+            cp -r web_ui/* _site/
+          elif [ -d "web/dist" ]; then
             cp -r web/dist/* _site/
           elif [ -d "web/build" ]; then
             cp -r web/build/* _site/
@@ -82,8 +87,19 @@ jobs:
             cp -r web/* _site/
           fi
 
-          # Copy extension (as downloadable)
-          if [ -d "extension" ]; then
+          # Copy demo interface
+          if [ -d "web/demo" ]; then
+            mkdir -p _site/demo
+            cp -r web/demo/* _site/demo/
+          fi
+
+          # Copy browser extension (as downloadable)
+          if [ -d "browser_extension" ]; then
+            mkdir -p _site/extension
+            cp -r browser_extension/* _site/extension/
+            # Create zip for easy download
+            cd _site/extension && zip -r ../phishnet-extension.zip . && cd ../..
+          elif [ -d "extension" ]; then
             mkdir -p _site/extension
             cp -r extension/* _site/extension/
           fi
