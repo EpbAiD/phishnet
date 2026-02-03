@@ -321,9 +321,17 @@ def fetch_alienvault_otx():
     return urls
 
 
-def generate_legitimate_urls(count: int):
-    """Generate legitimate URLs from known-good domains."""
+def generate_legitimate_urls(count: int, unique_suffix: bool = True):
+    """
+    Generate legitimate URLs from known-good domains.
+
+    Args:
+        count: Number of legitimate URLs to generate
+        unique_suffix: If True, adds timestamp-based suffix to prevent deduplication
+                      This is important for continuous data collection
+    """
     import random
+    import hashlib
 
     legit_domains = [
         # Top websites
@@ -439,27 +447,40 @@ def generate_legitimate_urls(count: int):
     print(f"→ Generating {count} legitimate URLs...")
 
     urls = []
-    random.seed(int(datetime.now().timestamp()))
+    timestamp = int(datetime.now().timestamp())
+    random.seed(timestamp)
     shuffled_domains = random.sample(legit_domains, len(legit_domains))
     common_paths = ['', '/about', '/contact', '/help', '/support', '/faq', '/terms', '/privacy', '/login', '/signup']
+
+    # Generate unique suffix for this batch to prevent deduplication
+    batch_id = hashlib.md5(str(timestamp).encode()).hexdigest()[:8] if unique_suffix else ''
 
     for domain in shuffled_domains:
         if len(urls) >= count:
             break
 
-        # Add root URL
-        urls.append({'url': f'https://{domain}', 'label': 'legitimate', 'source': 'known_good'})
+        # Add root URL (with optional unique query param for dedup resistance)
+        if unique_suffix:
+            urls.append({'url': f'https://{domain}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+        else:
+            urls.append({'url': f'https://{domain}', 'label': 'legitimate', 'source': 'known_good'})
 
         # Add www variant
         if len(urls) < count:
-            urls.append({'url': f'https://www.{domain}', 'label': 'legitimate', 'source': 'known_good'})
+            if unique_suffix:
+                urls.append({'url': f'https://www.{domain}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+            else:
+                urls.append({'url': f'https://www.{domain}', 'label': 'legitimate', 'source': 'known_good'})
 
         # Add some path variations
         for path in random.sample(common_paths, min(3, len(common_paths))):
             if len(urls) >= count:
                 break
             if path:
-                urls.append({'url': f'https://{domain}{path}', 'label': 'legitimate', 'source': 'known_good'})
+                if unique_suffix:
+                    urls.append({'url': f'https://{domain}{path}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+                else:
+                    urls.append({'url': f'https://{domain}{path}', 'label': 'legitimate', 'source': 'known_good'})
 
     print(f"  ✓ Generated {len(urls)} legitimate URLs")
     return urls
@@ -556,10 +577,10 @@ def fetch_urls(output_file: str, target_count: int = 1000):
 
     print(f"After master dedup: {after_master_dedup} (removed {after_internal_dedup - after_master_dedup} duplicates)")
 
-    # Generate legitimate URLs
+    # Generate legitimate URLs (no unique suffix for batch mode - dedup is desired)
     print()
     legit_needed = target_count // 2
-    legit_urls = generate_legitimate_urls(legit_needed)
+    legit_urls = generate_legitimate_urls(legit_needed, unique_suffix=False)
     df_legit = pd.DataFrame(legit_urls)
     df_legit = df_legit.drop_duplicates(subset=['url'])
 

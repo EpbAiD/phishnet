@@ -3,6 +3,7 @@
 # ---------------------------------------------------------------
 # Unified explanation generation for ALL prediction endpoints
 # Automatically generates LLM explanations for trust-building
+# Priority: Groq API -> Local LLM -> Rule-based fallback
 # ===============================================================
 
 import numpy as np
@@ -19,6 +20,11 @@ def generate_unified_explanation(
 ) -> Tuple[str, str, str]:
     """
     Generate unified explanation for any model prediction.
+
+    Priority order:
+    1. Groq API (fast, high-quality, cloud-based)
+    2. Local LLM (Qwen2.5-0.5B, requires torch/transformers)
+    3. Rule-based fallback (always available)
 
     Args:
         url: The URL being analyzed
@@ -46,25 +52,38 @@ def generate_unified_explanation(
     is_phishing = risk_score >= threshold
     verdict = "suspicious" if is_phishing else "safe"
 
-    # Try to use LLM for explanation
+    # Prepare predictions dict for LLM
+    predictions = {
+        f"{model_type}_prob": float(risk_score),
+        "ensemble_prob": float(risk_score),  # Use risk_score as ensemble
+        "verdict": (
+            "phishing" if is_phishing else "legit"
+        ),  # LLM expects "phishing"/"legit"
+        "user_verdict": verdict,  # User-facing verdict
+    }
+
+    # Extract domain from URL
+    parsed = urlparse(url)
+    domain = parsed.netloc or parsed.path
+
+    # Priority 1: Try Groq API (fast, cloud-based)
+    try:
+        from src.api.groq_explainer import is_groq_available, generate_groq_explanation
+
+        if is_groq_available():
+            explanation = generate_groq_explanation(
+                url=url, domain=domain, predictions=predictions, top_features=top_features
+            )
+            if explanation:
+                return explanation, verdict, confidence
+            print("Groq returned empty response, trying fallback...")
+    except Exception as e:
+        print(f"Groq explanation failed: {e}")
+
+    # Priority 2: Try local LLM (requires torch/transformers)
     try:
         from src.api.llm_explainer import generate_explanation
 
-        # Prepare predictions dict for LLM
-        predictions = {
-            f"{model_type}_prob": float(risk_score),
-            "ensemble_prob": float(risk_score),  # Use risk_score as ensemble
-            "verdict": (
-                "phishing" if is_phishing else "legit"
-            ),  # LLM expects "phishing"/"legit"
-            "user_verdict": verdict,  # User-facing verdict
-        }
-
-        # Extract domain from URL
-        parsed = urlparse(url)
-        domain = parsed.netloc or parsed.path
-
-        # Generate LLM explanation
         explanation = generate_explanation(
             url=url, domain=domain, predictions=predictions, top_features=top_features
         )
@@ -72,7 +91,7 @@ def generate_unified_explanation(
         return explanation, verdict, confidence
 
     except Exception as e:
-        print(f"⚠️ LLM explanation failed, using fallback: {e}")
+        print(f"Local LLM explanation failed, using fallback: {e}")
         return (
             _generate_fallback_explanation(
                 url, risk_score, verdict, confidence, model_type

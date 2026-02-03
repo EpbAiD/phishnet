@@ -21,4 +21,6 @@ services:
         value: "true"
       - key: MODEL_CHECK_INTERVAL
         value: "300"
+      - key: GROQ_API_KEY
+        sync: false  # Set manually in Render dashboard
     healthCheckPath: /health
