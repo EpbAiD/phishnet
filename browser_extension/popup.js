@@ -1,4 +1,5 @@
-const API_BASE = 'http://localhost:8000';
+// API URL - update this after Render deployment
+const API_BASE = 'https://phishnet-api.onrender.com';
 
 // Track current scan for feedback
 let currentScanId = null;
@@ -59,9 +60,7 @@ async function checkCurrentPage() {
 
         const data = await response.json();
         currentPrediction = data.is_phishing ? 1 : 0;
-
-        // Record scan in database
-        await recordScan(url, data);
+        currentScanId = data.scan_id;  // Get scan_id from API response
 
         displayResult(data, url);
 
@@ -74,35 +73,6 @@ async function checkCurrentPage() {
             </div>
             <button onclick="checkCurrentPage()">Retry</button>
         `;
-    }
-}
-
-// Record scan in database for feedback tracking
-async function recordScan(url, predictionData) {
-    try {
-        const response = await fetch(`${API_BASE}/scan`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: url,
-                prediction: predictionData.is_phishing ? 1 : 0,
-                confidence: predictionData.risk_score,
-                url_model_score: predictionData.risk_score,
-                dns_model_score: null,
-                whois_model_score: null,
-                explanation: null,
-                model_version: predictionData.model_name,
-                source: 'browser_extension'
-            })
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            currentScanId = data.id;
-        }
-    } catch (error) {
-        console.error('Failed to record scan:', error);
-        // Non-critical, continue without scan ID
     }
 }
 
