@@ -147,10 +147,12 @@ class ContinuousCollector:
         # Deduplicate within batch
         df = df.drop_duplicates(subset=['url'])
 
-        # Add legitimate URLs for balance (30% of phishing count)
+        # Add legitimate URLs for balance (100% of phishing count for 50:50 split)
+        # This is CRITICAL for model performance - class imbalance causes false positives
+        # Use unique_suffix=True to ensure URLs aren't deduplicated across batches
         phishing_count = len(df[df['label'] == 'phishing'])
-        legit_count = max(int(phishing_count * 0.3), 50)
-        legit_urls = generate_legitimate_urls(legit_count)
+        legit_count = max(phishing_count, 100)  # Match phishing count for balance
+        legit_urls = generate_legitimate_urls(legit_count, unique_suffix=True)
         df_legit = pd.DataFrame(legit_urls).drop_duplicates(subset=['url'])
 
         df = pd.concat([df, df_legit], ignore_index=True)
