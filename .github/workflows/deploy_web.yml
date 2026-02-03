@@ -38,7 +38,7 @@ jobs:
       - name: Build React app
         run: |
           cd web-app
-          npm ci
+          npm install
           npm run build
           cd ..
 
