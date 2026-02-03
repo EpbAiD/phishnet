@@ -54,7 +54,7 @@ psycopg2-binary==2.9.9
 boto3==1.34.0
 
 # Groq API for LLM explanations
-groq==0.4.2
+groq>=0.11.0
 
 # Optional: Local LLM Support (not used in current deployment)
 # torch==2.1.2
