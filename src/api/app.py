@@ -344,10 +344,12 @@ def predict_url(request: URLPredictRequest):
     """Predict phishing risk using URL features only."""
     t0 = time.time()
     url = normalize_input_url(request.url)
+    logger.info(f"[/predict/url] Processing: {url}")
 
     prob, latency_ms, model_name, debug = predict_url_risk(url)
     _, _, threshold = load_url_model()
     is_phishing = prob >= threshold
+    logger.info(f"[/predict/url] Risk score: {prob:.4f}, threshold: {threshold}")
 
     # Generate LLM explanation (REQUIRED for trust-building)
     from src.api.unified_explainer import (
@@ -356,9 +358,12 @@ def predict_url(request: URLPredictRequest):
     )
 
     # Extract SHAP features for evidence-based explanation
+    logger.info(f"[/predict/url] Extracting SHAP features...")
     top_features = extract_features_for_explanation(url, model_type="url")
+    logger.info(f"[/predict/url] SHAP features: {top_features is not None}")
 
     # Generate explanation
+    logger.info(f"[/predict/url] Generating explanation...")
     explanation, verdict, confidence = generate_unified_explanation(
         url=url,
         risk_score=prob,
@@ -366,6 +371,7 @@ def predict_url(request: URLPredictRequest):
         threshold=threshold,
         top_features=top_features,
     )
+    logger.info(f"[/predict/url] Explanation type: {'Groq' if '**' in explanation or '•' in explanation else 'Rule-based'}")
 
     total_latency_ms = (time.time() - t0) * 1000
 
