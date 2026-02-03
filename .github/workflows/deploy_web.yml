@@ -5,9 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'web/**'
-      - 'web_ui/**'
-      - 'extension/**'
+      - 'web-app/**'
       - 'browser_extension/**'
       - 'docs/**'
   workflow_dispatch:
@@ -30,60 +28,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Build web interface (if needed)
-        run: |
-          # Check if web/ has a package.json for build
-          if [ -f "web/package.json" ]; then
-            echo "📦 Building web interface with npm..."
-            cd web
-            npm ci
-            npm run build
-            cd ..
-          else
-            echo "ℹ️ No package.json in web/, using static files"
-          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-app/package-lock.json
 
-          # Check web_ui/ - always static
-          if [ -d "web_ui" ]; then
-            echo "✅ Found web_ui/ directory (static files)"
-          fi
-
-      - name: Build browser extension (if needed)
+      - name: Build React app
         run: |
-          # Check if extension has package.json
-          if [ -f "extension/package.json" ]; then
-            echo "📦 Building extension with npm..."
-            cd extension
-            npm ci
-            npm run build
-            cd ..
-          elif [ -d "browser_extension" ]; then
-            echo "✅ Found browser_extension/ directory (static files)"
-          else
-            echo "ℹ️ No extension directory found"
-          fi
+          cd web-app
+          npm ci
+          npm run build
+          cd ..
 
       - name: Prepare deployment directory
         run: |
           mkdir -p _site
 
-          # Copy web interface (prefer web_ui/ over web/)
-          if [ -d "web_ui" ]; then
-            echo "📦 Copying web_ui/ (main web interface with feedback)"
-            cp -r web_ui/* _site/
-          elif [ -d "web/dist" ]; then
-            cp -r web/dist/* _site/
-          elif [ -d "web/build" ]; then
-            cp -r web/build/* _site/
-          elif [ -d "web" ]; then
-            cp -r web/* _site/
-          fi
-
-          # Copy demo interface
-          if [ -d "web/demo" ]; then
-            mkdir -p _site/demo
-            cp -r web/demo/* _site/demo/
-          fi
+          # Copy React build output
+          cp -r web-app/build/* _site/
 
           # Copy browser extension (as downloadable)
           if [ -d "browser_extension" ]; then
@@ -91,9 +55,6 @@ jobs:
             cp -r browser_extension/* _site/extension/
             # Create zip for easy download
             cd _site/extension && zip -r ../phishnet-extension.zip . && cd ../..
-          elif [ -d "extension" ]; then
-            mkdir -p _site/extension
-            cp -r extension/* _site/extension/
           fi
 
           # Copy docs if exists
@@ -102,170 +63,8 @@ jobs:
             cp -r docs/* _site/docs/
           fi
 
-          # Create index.html if it doesn't exist
-          if [ ! -f "_site/index.html" ]; then
-            cat > _site/index.html << 'HTML'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>PhishNet - Phishing Detection System</title>
-              <style>
-                  * { margin: 0; padding: 0; box-sizing: border-box; }
-                  body {
-                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                      line-height: 1.6;
-                      color: #333;
-                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                      min-height: 100vh;
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      padding: 20px;
-                  }
-                  .container {
-                      max-width: 800px;
-                      background: white;
-                      border-radius: 20px;
-                      padding: 60px 40px;
-                      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                  }
-                  h1 {
-                      font-size: 3em;
-                      margin-bottom: 20px;
-                      color: #667eea;
-                      text-align: center;
-                  }
-                  .tagline {
-                      font-size: 1.3em;
-                      text-align: center;
-                      color: #666;
-                      margin-bottom: 40px;
-                  }
-                  .features {
-                      display: grid;
-                      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                      gap: 30px;
-                      margin-bottom: 40px;
-                  }
-                  .feature {
-                      padding: 20px;
-                      background: #f8f9fa;
-                      border-radius: 10px;
-                      border-left: 4px solid #667eea;
-                  }
-                  .feature h3 {
-                      color: #667eea;
-                      margin-bottom: 10px;
-                  }
-                  .cta {
-                      display: flex;
-                      gap: 20px;
-                      justify-content: center;
-                      flex-wrap: wrap;
-                  }
-                  .btn {
-                      padding: 15px 30px;
-                      border-radius: 8px;
-                      text-decoration: none;
-                      font-weight: 600;
-                      transition: transform 0.2s;
-                      display: inline-block;
-                  }
-                  .btn:hover { transform: translateY(-2px); }
-                  .btn-primary {
-                      background: #667eea;
-                      color: white;
-                  }
-                  .btn-secondary {
-                      background: #48bb78;
-                      color: white;
-                  }
-                  .stats {
-                      margin-top: 40px;
-                      padding: 30px;
-                      background: #f8f9fa;
-                      border-radius: 10px;
-                      text-align: center;
-                  }
-                  .stats h2 { color: #667eea; margin-bottom: 20px; }
-                  .stat-grid {
-                      display: grid;
-                      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-                      gap: 20px;
-                  }
-                  .stat-item {
-                      padding: 15px;
-                      background: white;
-                      border-radius: 8px;
-                  }
-                  .stat-value {
-                      font-size: 2em;
-                      font-weight: bold;
-                      color: #667eea;
-                  }
-                  .stat-label {
-                      color: #666;
-                      font-size: 0.9em;
-                  }
-              </style>
-          </head>
-          <body>
-              <div class="container">
-                  <h1>🛡️ PhishNet</h1>
-                  <p class="tagline">Advanced ML-powered phishing detection system</p>
-
-                  <div class="features">
-                      <div class="feature">
-                          <h3>🎯 Real-time Detection</h3>
-                          <p>Analyze URLs instantly using ensemble ML models with 97%+ accuracy</p>
-                      </div>
-                      <div class="feature">
-                          <h3>🔍 Multi-layer Analysis</h3>
-                          <p>URL structure, DNS records, and WHOIS data for comprehensive detection</p>
-                      </div>
-                      <div class="feature">
-                          <h3>🚀 Browser Extension</h3>
-                          <p>Seamless protection while browsing with real-time warnings</p>
-                      </div>
-                      <div class="feature">
-                          <h3>📊 Daily Updates</h3>
-                          <p>Automated data collection and model retraining for latest threats</p>
-                      </div>
-                  </div>
-
-                  <div class="cta">
-                      <a href="./demo/" class="btn btn-primary">🔗 Try Demo</a>
-                      <a href="./extension/" class="btn btn-secondary">📥 Download Extension</a>
-                  </div>
-
-                  <div class="stats">
-                      <h2>System Performance</h2>
-                      <div class="stat-grid">
-                          <div class="stat-item">
-                              <div class="stat-value">97.1%</div>
-                              <div class="stat-label">DNS Detection</div>
-                          </div>
-                          <div class="stat-item">
-                              <div class="stat-value">96.0%</div>
-                              <div class="stat-label">WHOIS Detection</div>
-                          </div>
-                          <div class="stat-item">
-                              <div class="stat-value">1000+</div>
-                              <div class="stat-label">Daily URLs</div>
-                          </div>
-                          <div class="stat-item">
-                              <div class="stat-value">24/7</div>
-                              <div class="stat-label">Monitoring</div>
-                          </div>
-                      </div>
-                  </div>
-              </div>
-          </body>
-          </html>
-          HTML
-          fi
+          echo "📦 Deployment directory contents:"
+          ls -la _site/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
