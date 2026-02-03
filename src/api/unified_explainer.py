@@ -82,23 +82,31 @@ def generate_unified_explanation(
 
     # Priority 2: Try local LLM (requires torch/transformers)
     try:
-        from src.api.llm_explainer import generate_explanation
+        from src.api.llm_explainer import generate_explanation, TORCH_AVAILABLE
 
-        explanation = generate_explanation(
-            url=url, domain=domain, predictions=predictions, top_features=top_features
-        )
+        # Only try local LLM if torch is actually available
+        if TORCH_AVAILABLE:
+            explanation = generate_explanation(
+                url=url, domain=domain, predictions=predictions, top_features=top_features
+            )
+            # Check if we got a real explanation (not the "not available" message)
+            if explanation and "not available" not in explanation.lower():
+                return explanation, verdict, confidence
 
-        return explanation, verdict, confidence
+        # If torch not available or explanation failed, use fallback
+        print("Local LLM not available, using rule-based fallback")
 
     except Exception as e:
         print(f"Local LLM explanation failed, using fallback: {e}")
-        return (
-            _generate_fallback_explanation(
-                url, risk_score, verdict, confidence, model_type
-            ),
-            verdict,
-            confidence,
-        )
+
+    # Priority 3: Rule-based fallback (always available)
+    return (
+        _generate_fallback_explanation(
+            url, risk_score, verdict, confidence, model_type
+        ),
+        verdict,
+        confidence,
+    )
 
 
 def _generate_fallback_explanation(
