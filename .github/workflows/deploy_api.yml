@@ -76,25 +76,21 @@ jobs:
           SG_ID=$(aws ec2 describe-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)
           echo "Security Group: $SG_ID"
 
-          # Open port 22 (SSH) if not already open
-          EXISTING_SSH=$(aws ec2 describe-security-groups --group-ids $SG_ID --query "SecurityGroups[0].IpPermissions[?FromPort==\`22\`]" --output text)
-          if [ -z "$EXISTING_SSH" ]; then
-            echo "Opening port 22 (SSH)..."
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
-            echo "Port 22 opened"
-          else
-            echo "Port 22 already open"
-          fi
+          # Show current inbound rules for debugging
+          echo "Current inbound rules:"
+          aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp]' --output text || true
 
-          # Open port 8000 (API) if not already open
-          EXISTING_API=$(aws ec2 describe-security-groups --group-ids $SG_ID --query "SecurityGroups[0].IpPermissions[?FromPort==\`8000\`]" --output text)
-          if [ -z "$EXISTING_API" ]; then
-            echo "Opening port 8000 (API)..."
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0
-            echo "Port 8000 opened"
-          else
-            echo "Port 8000 already open"
-          fi
+          # Open port 22 (SSH) for all IPs - try to add, ignore if already exists
+          echo "Ensuring port 22 (SSH) is open to 0.0.0.0/0..."
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 2>/dev/null || echo "Port 22 rule already exists or failed"
+
+          # Open port 8000 (API) for all IPs - try to add, ignore if already exists
+          echo "Ensuring port 8000 (API) is open to 0.0.0.0/0..."
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8000 --cidr 0.0.0.0/0 2>/dev/null || echo "Port 8000 rule already exists or failed"
+
+          # Show updated rules
+          echo "Updated inbound rules:"
+          aws ec2 describe-security-groups --group-ids $SG_ID --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp]' --output text || true
 
       - name: Deploy API
         if: github.event.inputs.action == 'deploy'
