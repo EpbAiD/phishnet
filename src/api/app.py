@@ -275,12 +275,26 @@ async def _startup_event():
 @app.get("/health")
 def health_check():
     """Health check with model version info."""
+    # Check Groq availability
+    groq_status = "unknown"
+    try:
+        from src.api.groq_explainer import is_groq_available, GROQ_LIBRARY_AVAILABLE
+        if not GROQ_LIBRARY_AVAILABLE:
+            groq_status = "library_not_installed"
+        elif is_groq_available():
+            groq_status = "available"
+        else:
+            groq_status = "no_api_key"
+    except Exception as e:
+        groq_status = f"error: {str(e)}"
+
     return {
         "status": "ok",
         "model_version": model_state['version'],
         "last_reload": model_state['last_reload'].isoformat() if model_state['last_reload'] else None,
         "reload_count": model_state['reload_count'],
         "hot_reload_enabled": model_state['enabled'],
+        "groq_status": groq_status,
     }
 
 
