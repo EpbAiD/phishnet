@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: phishnet-api
+    runtime: docker
+    repo: https://github.com/EpbAiD/phishnet
+    branch: main
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: AWS_REGION
+        value: us-east-1
+      - key: S3_BUCKET
+        value: phishnet-data
+      - key: AWS_ACCESS_KEY_ID
+        sync: false  # Set manually in Render dashboard
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: ENABLE_HOT_RELOAD
+        value: "true"
+      - key: MODEL_CHECK_INTERVAL
+        value: "300"
+    healthCheckPath: /health
