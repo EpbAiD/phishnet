@@ -11,16 +11,13 @@ import os
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
-# Check if Groq API is available
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_AVAILABLE = False
-
+# Check if groq library is installed
 try:
     from groq import Groq
-    if GROQ_API_KEY:
-        GROQ_AVAILABLE = True
+    GROQ_LIBRARY_AVAILABLE = True
 except ImportError:
     Groq = None
+    GROQ_LIBRARY_AVAILABLE = False
 
 # ---------------------------------------------------------------
 # Configuration
@@ -45,21 +42,33 @@ def get_groq_client():
     """
     Get or create the Groq client.
     Returns None if GROQ_API_KEY is not set.
+    Checks environment variable at runtime (not import time) for hot reload support.
     """
     global _client
 
-    if not GROQ_AVAILABLE:
+    if not GROQ_LIBRARY_AVAILABLE:
+        return None
+
+    # Check API key at runtime (allows hot reload of env vars)
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
         return None
 
     if _client is None:
-        _client = Groq(api_key=GROQ_API_KEY)
+        _client = Groq(api_key=api_key)
 
     return _client
 
 
 def is_groq_available() -> bool:
-    """Check if Groq API is available and configured."""
-    return GROQ_AVAILABLE and GROQ_API_KEY is not None
+    """
+    Check if Groq API is available and configured.
+    Checks at runtime for hot reload support.
+    """
+    if not GROQ_LIBRARY_AVAILABLE:
+        return False
+    api_key = os.environ.get("GROQ_API_KEY")
+    return api_key is not None and len(api_key) > 0
 
 
 def generate_groq_explanation(
