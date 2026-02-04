@@ -1,12 +1,14 @@
-# Phishing Detection System
+# PhishNet - AI-Powered Phishing Detection
 
-[![CI/CD Pipeline](https://github.com/YOUR_USERNAME/phishing-detection/workflows/CI%2FCD%20Pipeline/badge.svg)](https://github.com/YOUR_USERNAME/phishing-detection/actions)
-[![Code Coverage](https://codecov.io/gh/YOUR_USERNAME/phishing-detection/branch/main/graph/badge.svg)](https://codecov.io/gh/YOUR_USERNAME/phishing-detection)
+[![API Status](https://img.shields.io/badge/API-Live-brightgreen)](https://phishnet-api.onrender.com/health)
+[![Web App](https://img.shields.io/badge/Web-Live-blue)](https://epbaid.github.io/phishnet/)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Production-ready phishing detection API using ensemble machine learning with 90% accuracy.**
+**Production-ready phishing detection API using ensemble machine learning with LLM-powered explanations.**
+
+> **Live Demo**: [https://epbaid.github.io/phishnet/](https://epbaid.github.io/phishnet/)
 
 ## Features
 
