@@ -13,10 +13,11 @@
 ## Features
 
 - **Multi-Model Ensemble**: Combines URL, WHOIS, and DNS analysis for robust detection
-- **90% Accuracy**: Trained on 40,000+ URLs from 6 threat intelligence sources
+- **90%+ Accuracy**: Trained on 40,000+ URLs from 13 threat intelligence sources
+- **LLM Explanations**: Groq-powered natural language explanations for every prediction
 - **Production API**: FastAPI with rate limiting, input validation, and structured logging
-- **Explainability**: SHAP-based feature importance + LLM-generated explanations
-- **MLOps Best Practices**: Model versioning, CI/CD pipeline, comprehensive testing
+- **Continuous Learning**: 24/7 data collection with daily model retraining
+- **Browser Extension**: Chrome extension for real-time URL checking
 - **Docker Deployment**: Multi-stage builds with health checks
 
 ## Quick Start
