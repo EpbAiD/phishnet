@@ -24,8 +24,8 @@
 ### 1. Clone & Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/phishing-detection.git
-cd phishing-detection
+git clone https://github.com/EpbAiD/phishnet.git
+cd phishnet
 
 # Create virtual environment
 python -m venv venv
