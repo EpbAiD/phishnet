@@ -194,4 +194,4 @@ gh run list --workflow=ci.yml --limit 1
 
 ---
 
-*Last updated: 2026-01-03 by Claude Code*
+*Last updated: 2026-02-04*
