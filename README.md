@@ -100,7 +100,7 @@ curl -X POST "http://localhost:8000/predict/ensemble" \
 ## Project Structure
 
 ```
-phishing-detection/
+phishnet/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml              # CI/CD pipeline (GitHub Actions)
