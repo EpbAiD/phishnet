@@ -347,11 +347,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Contact
 
-**Author**: Your Name
-**Email**: your.email@example.com
-**LinkedIn**: [your-linkedin](https://linkedin.com/in/your-profile)
-**GitHub**: [@your-username](https://github.com/your-username)
+**Author**: Eeshan Bhanap
+**GitHub**: [@EpbAiD](https://github.com/EpbAiD)
 
 ---
 
-**Built with ❤️ for cybersecurity research and education.**
+**Built for cybersecurity research and education.**
