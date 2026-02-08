@@ -189,6 +189,7 @@ jobs:
           aws s3 cp data/processed/url_features_${{ env.batch_date }}.csv s3://${{ env.S3_BUCKET }}/queue/url_features_${{ env.batch_date }}.csv
 
       - name: Start EC2 instance
+        id: ec2
         run: |
           INSTANCE_STATE=$(aws ec2 describe-instances \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
@@ -213,6 +214,7 @@ jobs:
             --query 'Reservations[0].Instances[0].PublicIpAddress' \
             --output text)
           echo "EC2 Public IP: $EC2_IP"
+          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
           echo "ec2_ip=$EC2_IP" >> $GITHUB_ENV
 
       - name: Upload VM script to S3
@@ -223,9 +225,11 @@ jobs:
       - name: EC2 Processing (DNS/WHOIS extraction + accumulation)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ env.ec2_ip }}
+          host: ${{ steps.ec2.outputs.ec2_ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 30m
           script: |
             cd /home/ec2-user/phishnet
             aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
