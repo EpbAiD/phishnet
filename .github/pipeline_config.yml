@@ -15,8 +15,8 @@ pipeline:
 stages:
   # STAGE 1: Data Collection
   data_collection:
-    frequency: "daily"       # How often to collect URLs
-    num_urls: 100            # URLs per collection - 50:50 balanced (phishing:legitimate)
+    frequency: "twice_daily" # Every 12 hours for faster data growth
+    num_urls: 1000           # URLs per collection - 50:50 balanced (phishing:legitimate)
     enabled: true
 
   # STAGE 2: Feature Extraction (VM Processing)
@@ -43,5 +43,6 @@ validation:
 # Schedule Settings (auto-generated from frequencies above)
 schedules:
   daily: "0 14 * * *"        # 9 AM EST (14:00 UTC)
+  twice_daily: "0 2,14 * * *" # 9 AM and 9 PM EST (02:00 and 14:00 UTC)
   weekly: "0 14 * * 0"       # Sunday 9 AM EST
   hourly: "0 * * * *"        # Top of every hour

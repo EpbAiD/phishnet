@@ -6,9 +6,10 @@ name: Unified ML Pipeline
 
 on:
   schedule:
-    # Daily schedule (controlled by config)
-    - cron: '0 14 * * *'     # 9 AM EST daily
-    # Weekly schedule (controlled by config)
+    # Twice daily schedule for data collection (9 AM and 9 PM EST)
+    - cron: '0 2 * * *'      # 9 PM EST (02:00 UTC next day)
+    - cron: '0 14 * * *'     # 9 AM EST (14:00 UTC)
+    # Weekly schedule for training (controlled by config)
     - cron: '0 14 * * 0'     # Sunday 9 AM EST
 
   workflow_dispatch:
@@ -89,7 +90,7 @@ jobs:
           DATA_FREQ="${{ steps.parse.outputs.data_collection_freq }}"
           if [ "$OVERRIDE" = "all" ] || [ "$OVERRIDE" = "data" ]; then
             SHOULD_RUN_DATA=true
-          elif [ "$DATA_FREQ" = "daily" ]; then
+          elif [ "$DATA_FREQ" = "daily" ] || [ "$DATA_FREQ" = "twice_daily" ]; then
             SHOULD_RUN_DATA=true
           elif [ "$DATA_FREQ" = "weekly" ] && [ "$IS_SUNDAY" = "7" ]; then
             SHOULD_RUN_DATA=true
