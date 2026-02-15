@@ -180,8 +180,6 @@ def reload_models():
 
 async def model_hot_reload_task():
     """Background task to check for and load new models from S3."""
-    global model_state
-
     logger.info(f"Starting model hot reload task (interval: {MODEL_CHECK_INTERVAL}s)")
 
     while True:
@@ -222,8 +220,6 @@ async def model_hot_reload_task():
 @app.on_event("startup")
 async def _startup_event():
     """Warm model cache on server boot and start hot reload task."""
-    global model_state
-
     # Load URL model
     try:
         model, cols, thr = load_url_model()
