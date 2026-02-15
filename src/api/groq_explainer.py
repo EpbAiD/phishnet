@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 # Check if groq library is installed
 try:
     from groq import Groq
+
     GROQ_LIBRARY_AVAILABLE = True
 except ImportError:
     Groq = None
@@ -142,18 +143,34 @@ def generate_groq_explanation(
                         is_negative = any(
                             keyword in plain_text.lower()
                             for keyword in [
-                                "suspicious", "recently registered", "short",
-                                "random", "trick", "multiple", "unusual",
-                                "brand name", "imperson", "scam", "ip address",
-                                "privacy protection", "abuse", "free registration", "many",
+                                "suspicious",
+                                "recently registered",
+                                "short",
+                                "random",
+                                "trick",
+                                "multiple",
+                                "unusual",
+                                "brand name",
+                                "imperson",
+                                "scam",
+                                "ip address",
+                                "privacy protection",
+                                "abuse",
+                                "free registration",
+                                "many",
                             ]
                         )
 
                         is_positive = any(
                             keyword in plain_text.lower()
                             for keyword in [
-                                "https", "several years", "normal", "standard",
-                                "legitimate", "does not", "low risk",
+                                "https",
+                                "several years",
+                                "normal",
+                                "standard",
+                                "legitimate",
+                                "does not",
+                                "low risk",
                             ]
                         )
 
@@ -266,8 +283,14 @@ def _extract_basic_url_features(
 
     # Brand impersonation check
     brand_names = [
-        "paypal", "amazon", "google", "microsoft", "apple",
-        "facebook", "netflix", "bank",
+        "paypal",
+        "amazon",
+        "google",
+        "microsoft",
+        "apple",
+        "facebook",
+        "netflix",
+        "bank",
     ]
     subdomain_parts = domain.split(".")[:-2] if domain.count(".") >= 2 else []
     has_brand_in_subdomain = any(
@@ -285,12 +308,19 @@ def _extract_basic_url_features(
     # TLD check
     tld = domain.split(".")[-1]
     suspicious_tlds = [
-        "xyz", "top", "tk", "ml", "ga", "cf", "gq", "work", "click", "link",
+        "xyz",
+        "top",
+        "tk",
+        "ml",
+        "ga",
+        "cf",
+        "gq",
+        "work",
+        "click",
+        "link",
     ]
     if tld in suspicious_tlds:
-        red_flags.append(
-            f"it uses a '.{tld}' domain extension often used by scammers"
-        )
+        red_flags.append(f"it uses a '.{tld}' domain extension often used by scammers")
 
     # Domain length check
     if len(domain) > 30:
@@ -307,15 +337,11 @@ def _extract_basic_url_features(
 
     # IP address check
     if parsed.hostname and parsed.hostname.replace(".", "").isdigit():
-        red_flags.append(
-            "it uses a raw IP address instead of a proper domain name"
-        )
+        red_flags.append("it uses a raw IP address instead of a proper domain name")
 
     # Positive signals
     if not red_flags and url_prob and url_prob < 0.3:
-        trust_signals.append(
-            "the website address follows normal naming patterns"
-        )
+        trust_signals.append("the website address follows normal naming patterns")
 
     if url_prob and url_prob > 0.5 and not red_flags:
         red_flags.append("the URL structure has suspicious characteristics")
@@ -386,7 +412,10 @@ Write a brief technical summary (3-5 sentences) covering:
 
         chat_completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a cybersecurity analyst providing technical assessments."},
+                {
+                    "role": "system",
+                    "content": "You are a cybersecurity analyst providing technical assessments.",
+                },
                 {"role": "user", "content": technical_prompt},
             ],
             model=PRIMARY_MODEL,
@@ -431,12 +460,30 @@ if __name__ == "__main__":
 
     test_features = {
         "url": [
-            {"feature": "suspicious_tld", "plain_language": "uses a suspicious domain extension (.xyz)", "shap_contribution": 0.32},
-            {"feature": "brand_in_subdomain", "plain_language": "contains 'paypal' in a suspicious way", "shap_contribution": 0.28},
+            {
+                "feature": "suspicious_tld",
+                "plain_language": "uses a suspicious domain extension (.xyz)",
+                "shap_contribution": 0.32,
+            },
+            {
+                "feature": "brand_in_subdomain",
+                "plain_language": "contains 'paypal' in a suspicious way",
+                "shap_contribution": 0.28,
+            },
         ],
-        "dns": [{"feature": "short_ttl", "plain_language": "DNS records change frequently", "shap_contribution": 0.15}],
+        "dns": [
+            {
+                "feature": "short_ttl",
+                "plain_language": "DNS records change frequently",
+                "shap_contribution": 0.15,
+            }
+        ],
         "whois": [
-            {"feature": "domain_age_days", "plain_language": "domain was recently registered (5 days ago)", "shap_contribution": 0.25}
+            {
+                "feature": "domain_age_days",
+                "plain_language": "domain was recently registered (5 days ago)",
+                "shap_contribution": 0.25,
+            }
         ],
     }
 

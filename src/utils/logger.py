@@ -131,7 +131,6 @@ from contextvars import ContextVar
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-
 # Context variable for request ID
 request_id_var: ContextVar[str] = ContextVar("request_id", default=None)
 

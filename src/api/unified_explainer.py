@@ -74,9 +74,14 @@ def generate_unified_explanation(
         if is_groq_available():
             print(f"[DEBUG] Groq is available, generating explanation for {url}")
             explanation = generate_groq_explanation(
-                url=url, domain=domain, predictions=predictions, top_features=top_features
+                url=url,
+                domain=domain,
+                predictions=predictions,
+                top_features=top_features,
             )
-            print(f"[DEBUG] Groq returned: {explanation[:100] if explanation else 'None'}...")
+            print(
+                f"[DEBUG] Groq returned: {explanation[:100] if explanation else 'None'}..."
+            )
             if explanation:
                 return explanation, verdict, confidence
             print("Groq returned empty response, trying fallback...")
@@ -84,6 +89,7 @@ def generate_unified_explanation(
             print("[DEBUG] Groq is NOT available (is_groq_available returned False)")
     except Exception as e:
         import traceback
+
         print(f"Groq explanation failed: {e}")
         print(f"[DEBUG] Groq traceback: {traceback.format_exc()}")
 
@@ -94,7 +100,10 @@ def generate_unified_explanation(
         # Only try local LLM if torch is actually available
         if TORCH_AVAILABLE:
             explanation = generate_explanation(
-                url=url, domain=domain, predictions=predictions, top_features=top_features
+                url=url,
+                domain=domain,
+                predictions=predictions,
+                top_features=top_features,
             )
             # Check if we got a real explanation (not the "not available" message)
             if explanation and "not available" not in explanation.lower():

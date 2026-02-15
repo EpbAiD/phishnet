@@ -42,7 +42,12 @@ from src.api.predict_utils import (
     predict_dns_risk,
     predict_ensemble_risk,
 )
-from src.api.model_loader import load_url_model, load_whois_model, load_dns_model, clear_model_cache
+from src.api.model_loader import (
+    load_url_model,
+    load_whois_model,
+    load_dns_model,
+    clear_model_cache,
+)
 from src.api.llm_explainer import generate_explanation
 from src.api.database import (
     get_db,
@@ -66,18 +71,18 @@ logger = logging.getLogger(__name__)
 # ===============================================================
 # MODEL HOT RELOAD CONFIGURATION
 # ===============================================================
-S3_BUCKET = os.environ.get('S3_BUCKET', 'phishnet-data')
-AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-MODEL_CHECK_INTERVAL = int(os.environ.get('MODEL_CHECK_INTERVAL', 300))  # 5 minutes
-ENABLE_HOT_RELOAD = os.environ.get('ENABLE_HOT_RELOAD', 'true').lower() == 'true'
+S3_BUCKET = os.environ.get("S3_BUCKET", "phishnet-data")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+MODEL_CHECK_INTERVAL = int(os.environ.get("MODEL_CHECK_INTERVAL", 300))  # 5 minutes
+ENABLE_HOT_RELOAD = os.environ.get("ENABLE_HOT_RELOAD", "true").lower() == "true"
 
 # Global state for model versioning
 model_state = {
-    'version': None,
-    'last_check': None,
-    'last_reload': None,
-    'reload_count': 0,
-    'enabled': ENABLE_HOT_RELOAD,
+    "version": None,
+    "last_check": None,
+    "last_reload": None,
+    "reload_count": 0,
+    "enabled": ENABLE_HOT_RELOAD,
 }
 
 app = FastAPI(
@@ -111,15 +116,18 @@ def normalize_input_url(raw_url: str) -> str:
 # MODEL HOT RELOAD FUNCTIONS
 # ===============================================================
 
+
 def get_s3_model_version() -> Optional[str]:
     """Check S3 for the current model version (last_trained timestamp)."""
     try:
-        s3 = boto3.client('s3', region_name=AWS_REGION)
-        response = s3.get_object(Bucket=S3_BUCKET, Key='models/production_metadata.json')
-        metadata = json.loads(response['Body'].read().decode('utf-8'))
-        return metadata.get('last_trained')
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        response = s3.get_object(
+            Bucket=S3_BUCKET, Key="models/production_metadata.json"
+        )
+        metadata = json.loads(response["Body"].read().decode("utf-8"))
+        return metadata.get("last_trained")
     except ClientError as e:
-        if e.response['Error']['Code'] == 'NoSuchKey':
+        if e.response["Error"]["Code"] == "NoSuchKey":
             logger.warning("No production_metadata.json found in S3")
             return None
         logger.error(f"Error checking S3 model version: {e}")
@@ -132,21 +140,21 @@ def get_s3_model_version() -> Optional[str]:
 def download_models_from_s3() -> bool:
     """Download latest models from S3 to local models/ directory."""
     try:
-        s3 = boto3.client('s3', region_name=AWS_REGION)
-        models_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+        models_dir = os.path.join(os.path.dirname(__file__), "..", "..", "models")
         os.makedirs(models_dir, exist_ok=True)
 
         # List all model files in S3
-        response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix='models/')
+        response = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix="models/")
 
-        if 'Contents' not in response:
+        if "Contents" not in response:
             logger.warning("No models found in S3")
             return False
 
         downloaded = 0
-        for obj in response['Contents']:
-            key = obj['Key']
-            if key.endswith('.pkl') or key.endswith('.json'):
+        for obj in response["Contents"]:
+            key = obj["Key"]
+            if key.endswith(".pkl") or key.endswith(".json"):
                 filename = os.path.basename(key)
                 local_path = os.path.join(models_dir, filename)
                 s3.download_file(S3_BUCKET, key, local_path)
@@ -167,10 +175,14 @@ def reload_models():
 
         # Reload models
         model, cols, thr = load_url_model()
-        logger.info(f"Reloaded URL model: {type(model).__name__} | {len(cols)} features")
+        logger.info(
+            f"Reloaded URL model: {type(model).__name__} | {len(cols)} features"
+        )
 
         model, cols, thr = load_whois_model()
-        logger.info(f"Reloaded WHOIS model: {type(model).__name__} | {len(cols)} features")
+        logger.info(
+            f"Reloaded WHOIS model: {type(model).__name__} | {len(cols)} features"
+        )
 
         return True
     except Exception as e:
@@ -184,26 +196,30 @@ async def model_hot_reload_task():
 
     while True:
         try:
-            if not model_state['enabled']:
+            if not model_state["enabled"]:
                 await asyncio.sleep(MODEL_CHECK_INTERVAL)
                 continue
 
-            model_state['last_check'] = datetime.now()
+            model_state["last_check"] = datetime.now()
 
             # Check S3 for new model version
             s3_version = get_s3_model_version()
 
-            if s3_version and s3_version != model_state['version']:
-                logger.info(f"New model version detected: {model_state['version']} -> {s3_version}")
+            if s3_version and s3_version != model_state["version"]:
+                logger.info(
+                    f"New model version detected: {model_state['version']} -> {s3_version}"
+                )
 
                 # Download new models
                 if download_models_from_s3():
                     # Reload models into memory
                     if reload_models():
-                        model_state['version'] = s3_version
-                        model_state['last_reload'] = datetime.now()
-                        model_state['reload_count'] += 1
-                        logger.info(f"Models reloaded successfully (version: {s3_version})")
+                        model_state["version"] = s3_version
+                        model_state["last_reload"] = datetime.now()
+                        model_state["reload_count"] += 1
+                        logger.info(
+                            f"Models reloaded successfully (version: {s3_version})"
+                        )
                     else:
                         logger.error("Failed to reload models after download")
                 else:
@@ -244,8 +260,8 @@ async def _startup_event():
     try:
         s3_version = get_s3_model_version()
         if s3_version:
-            model_state['version'] = s3_version
-            model_state['last_reload'] = datetime.now()
+            model_state["version"] = s3_version
+            model_state["last_reload"] = datetime.now()
             logger.info(f"Initial model version: {s3_version}")
     except Exception as e:
         logger.warning(f"Could not get initial model version from S3: {e}")
@@ -275,6 +291,7 @@ def health_check():
     groq_status = "unknown"
     try:
         from src.api.groq_explainer import is_groq_available, GROQ_LIBRARY_AVAILABLE
+
         if not GROQ_LIBRARY_AVAILABLE:
             groq_status = "library_not_installed"
         elif is_groq_available():
@@ -286,10 +303,14 @@ def health_check():
 
     return {
         "status": "ok",
-        "model_version": model_state['version'],
-        "last_reload": model_state['last_reload'].isoformat() if model_state['last_reload'] else None,
-        "reload_count": model_state['reload_count'],
-        "hot_reload_enabled": model_state['enabled'],
+        "model_version": model_state["version"],
+        "last_reload": (
+            model_state["last_reload"].isoformat()
+            if model_state["last_reload"]
+            else None
+        ),
+        "reload_count": model_state["reload_count"],
+        "hot_reload_enabled": model_state["enabled"],
         "groq_status": groq_status,
     }
 
@@ -302,7 +323,7 @@ def save_scan_to_db(
     dns_score: float = None,
     whois_score: float = None,
     explanation: str = None,
-    source: str = "api"
+    source: str = "api",
 ) -> Optional[int]:
     """
     Save a scan to the database and return the scan_id.
@@ -321,7 +342,7 @@ def save_scan_to_db(
             dns_model_score=dns_score,
             whois_model_score=whois_score,
             explanation=explanation,
-            model_version=model_state.get('version'),
+            model_version=model_state.get("version"),
             source=source,
         )
         db.add(db_scan)
@@ -367,7 +388,9 @@ def predict_url(request: URLPredictRequest):
         threshold=threshold,
         top_features=top_features,
     )
-    logger.info(f"[/predict/url] Explanation type: {'Groq' if '**' in explanation or '•' in explanation else 'Rule-based'}")
+    logger.info(
+        f"[/predict/url] Explanation type: {'Groq' if '**' in explanation or '•' in explanation else 'Rule-based'}"
+    )
 
     total_latency_ms = (time.time() - t0) * 1000
 
@@ -378,7 +401,7 @@ def predict_url(request: URLPredictRequest):
         confidence=prob,
         url_score=prob,
         explanation=explanation,
-        source="api"
+        source="api",
     )
 
     return URLPredictResponse(
@@ -520,9 +543,9 @@ def predict_ensemble(request: EnsemblePredictRequest):
 
     # Save scan to database for feedback collection
     # Extract individual model scores from debug if available
-    url_score = debug.get('url_prob') if debug else None
-    dns_score = debug.get('dns_prob') if debug else None
-    whois_score = debug.get('whois_prob') if debug else None
+    url_score = debug.get("url_prob") if debug else None
+    dns_score = debug.get("dns_prob") if debug else None
+    whois_score = debug.get("whois_prob") if debug else None
 
     scan_id = save_scan_to_db(
         url=url,
@@ -532,7 +555,7 @@ def predict_ensemble(request: EnsemblePredictRequest):
         dns_score=dns_score,
         whois_score=whois_score,
         explanation=explanation,
-        source="api"
+        source="api",
     )
 
     return EnsemblePredictResponse(
@@ -755,7 +778,7 @@ def explain_prediction(request: ExplainRequest):
         dns_score=dns_prob if dns_prob is not None and not np.isnan(dns_prob) else None,
         whois_score=whois_prob if not np.isnan(whois_prob) else None,
         explanation=layman_explanation,
-        source="api"
+        source="api",
     )
 
     return ExplainResponse(
@@ -774,6 +797,7 @@ def explain_prediction(request: ExplainRequest):
 # ===============================================================
 # FEEDBACK ENDPOINTS - For Human-in-the-Loop Model Improvement
 # ===============================================================
+
 
 @app.post("/scan", response_model=ScanResponse)
 def create_scan(scan: ScanCreate, db: Session = Depends(get_db)):
@@ -855,9 +879,7 @@ def submit_feedback(feedback: FeedbackCreate, db: Session = Depends(get_db)):
 
 @app.get("/feedback/corrections", response_model=List[dict])
 def get_corrections(
-    limit: int = 100,
-    since_days: int = 30,
-    db: Session = Depends(get_db)
+    limit: int = 100, since_days: int = 30, db: Session = Depends(get_db)
 ):
     """
     Get user corrections for model retraining.
@@ -883,13 +905,15 @@ def get_corrections(
     corrections = []
     for scan, feedback in results:
         if feedback.correct_label != scan.prediction:
-            corrections.append({
-                "url": scan.url,
-                "model_prediction": scan.prediction,
-                "correct_label": feedback.correct_label,
-                "confidence": scan.confidence,
-                "submitted_at": feedback.submitted_at.isoformat(),
-            })
+            corrections.append(
+                {
+                    "url": scan.url,
+                    "model_prediction": scan.prediction,
+                    "correct_label": feedback.correct_label,
+                    "confidence": scan.confidence,
+                    "submitted_at": feedback.submitted_at.isoformat(),
+                }
+            )
 
     return corrections
 

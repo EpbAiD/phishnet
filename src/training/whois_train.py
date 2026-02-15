@@ -22,7 +22,6 @@ from sklearn.metrics import (
 
 from src.training.model_zoo import get_models_for_dataset
 
-
 # ----------------------------- Model Subset -----------------------------
 WHOIS_MODEL_SUBSET = ["lgbm", "xgb", "rf", "catboost"]
 

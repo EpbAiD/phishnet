@@ -144,7 +144,9 @@ def normalize_labels(df: pd.DataFrame) -> pd.DataFrame:
     # Check for unmapped values
     if df_norm["label"].isna().any():
         unmapped_count = df_norm["label"].isna().sum()
-        print(f"⚠️  Warning: {unmapped_count} rows with unmapped labels - dropping them")
+        print(
+            f"⚠️  Warning: {unmapped_count} rows with unmapped labels - dropping them"
+        )
         df_norm = df_norm.dropna(subset=["label"])
 
     # Ensure label is integer

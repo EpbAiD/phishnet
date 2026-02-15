@@ -26,7 +26,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 # Database URL from environment or default
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://phishnet_admin:PhishNet2024Secure@phishnet-db.c83quikqw26n.us-east-1.rds.amazonaws.com:5432/phishnet"
+    "postgresql://phishnet_admin:PhishNet2024Secure@phishnet-db.c83quikqw26n.us-east-1.rds.amazonaws.com:5432/phishnet",
 )
 
 # Create engine with connection pooling
@@ -56,6 +56,7 @@ class Scan(Base):
     Stores every URL scan with prediction details.
     Used for analytics and feeding corrections back into training.
     """
+
     __tablename__ = "scans"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -63,7 +64,7 @@ class Scan(Base):
 
     # Final ensemble prediction
     prediction = Column(Integer)  # 0=legitimate, 1=phishing
-    confidence = Column(Float)    # Ensemble confidence score
+    confidence = Column(Float)  # Ensemble confidence score
 
     # Individual model scores (3-model ensemble)
     url_model_score = Column(Float)
@@ -88,6 +89,7 @@ class Feedback(Base):
     When a user says "this prediction was wrong", we store the correction
     and use it in the next training cycle.
     """
+
     __tablename__ = "feedback"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -98,7 +100,7 @@ class Feedback(Base):
 
     # Explanation feedback
     explanation_helpful = Column(Boolean)  # Was the explanation useful?
-    explanation_comment = Column(Text)     # Optional user comment
+    explanation_comment = Column(Text)  # Optional user comment
 
     # Metadata
     source = Column(String(50))  # 'extension', 'api', 'web'
@@ -113,6 +115,7 @@ class ModelMetrics(Base):
     Tracks model performance over time.
     Updated during training runs with accuracy, F1, etc.
     """
+
     __tablename__ = "model_metrics"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -147,7 +150,9 @@ def get_db():
     Yields a database session and ensures cleanup.
     """
     if SessionLocal is None:
-        raise Exception("Database not available - RDS may not be accessible from this environment")
+        raise Exception(
+            "Database not available - RDS may not be accessible from this environment"
+        )
     db = SessionLocal()
     try:
         yield db
@@ -162,6 +167,7 @@ from typing import Optional
 
 class ScanCreate(BaseModel):
     """Schema for creating a scan record."""
+
     url: str
     prediction: int
     confidence: float
@@ -175,6 +181,7 @@ class ScanCreate(BaseModel):
 
 class ScanResponse(BaseModel):
     """Schema for scan response."""
+
     id: int
     url: str
     prediction: int
@@ -188,6 +195,7 @@ class ScanResponse(BaseModel):
 
 class FeedbackCreate(BaseModel):
     """Schema for submitting feedback."""
+
     scan_id: int
     correct_label: Optional[int] = None  # 0 or 1
     explanation_helpful: Optional[bool] = None
@@ -197,6 +205,7 @@ class FeedbackCreate(BaseModel):
 
 class FeedbackResponse(BaseModel):
     """Schema for feedback response."""
+
     id: int
     scan_id: int
     correct_label: Optional[int] = None
