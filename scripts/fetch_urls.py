@@ -28,18 +28,19 @@ def fetch_phishtank():
     try:
         print("→ PhishTank...")
         response = requests.get(
-            'http://data.phishtank.com/data/online-valid.csv',
-            timeout=REQUEST_TIMEOUT
+            "http://data.phishtank.com/data/online-valid.csv", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            lines = response.text.split('\n')[1:]  # Skip header
+            lines = response.text.split("\n")[1:]  # Skip header
             for line in lines:
                 if line.strip():
-                    parts = line.split(',')
+                    parts = line.split(",")
                     if len(parts) >= 2:
                         url = parts[1].strip('"')
-                        if url.startswith('http'):
-                            urls.append({'url': url, 'label': 'phishing', 'source': 'phishtank'})
+                        if url.startswith("http"):
+                            urls.append(
+                                {"url": url, "label": "phishing", "source": "phishtank"}
+                            )
             print(f"  ✓ Fetched {len(urls)} phishing URLs from PhishTank")
     except Exception as e:
         print(f"  ✗ PhishTank failed: {e}")
@@ -52,13 +53,14 @@ def fetch_openphish():
     try:
         print("→ OpenPhish...")
         response = requests.get(
-            'https://openphish.com/feed.txt',
-            timeout=REQUEST_TIMEOUT
+            "https://openphish.com/feed.txt", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            for url in response.text.split('\n'):
-                if url.strip() and url.startswith('http'):
-                    urls.append({'url': url.strip(), 'label': 'phishing', 'source': 'openphish'})
+            for url in response.text.split("\n"):
+                if url.strip() and url.startswith("http"):
+                    urls.append(
+                        {"url": url.strip(), "label": "phishing", "source": "openphish"}
+                    )
             print(f"  ✓ Fetched {len(urls)} phishing URLs from OpenPhish")
     except Exception as e:
         print(f"  ✗ OpenPhish failed: {e}")
@@ -71,18 +73,19 @@ def fetch_urlhaus():
     try:
         print("→ URLhaus...")
         response = requests.get(
-            'https://urlhaus.abuse.ch/downloads/csv_recent/',
-            timeout=REQUEST_TIMEOUT
+            "https://urlhaus.abuse.ch/downloads/csv_recent/", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            lines = response.text.split('\n')
+            lines = response.text.split("\n")
             for line in lines:
-                if line.strip() and not line.startswith('#'):
-                    parts = line.split(',')
+                if line.strip() and not line.startswith("#"):
+                    parts = line.split(",")
                     if len(parts) >= 3:
                         url = parts[2].strip('"')
-                        if url.startswith('http'):
-                            urls.append({'url': url, 'label': 'phishing', 'source': 'urlhaus'})
+                        if url.startswith("http"):
+                            urls.append(
+                                {"url": url, "label": "phishing", "source": "urlhaus"}
+                            )
             print(f"  ✓ Fetched {len(urls)} malicious URLs from URLhaus")
     except Exception as e:
         print(f"  ✗ URLhaus failed: {e}")
@@ -95,18 +98,23 @@ def fetch_phishstats():
     try:
         print("→ PhishStats...")
         response = requests.get(
-            'https://phishstats.info/phish_score.csv',
-            timeout=REQUEST_TIMEOUT
+            "https://phishstats.info/phish_score.csv", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            lines = response.text.split('\n')[1:]  # Skip header
+            lines = response.text.split("\n")[1:]  # Skip header
             for line in lines:
                 if line.strip():
-                    parts = line.split(',')
+                    parts = line.split(",")
                     if len(parts) >= 2:
                         url = parts[1].strip('"')
-                        if url.startswith('http'):
-                            urls.append({'url': url, 'label': 'phishing', 'source': 'phishstats'})
+                        if url.startswith("http"):
+                            urls.append(
+                                {
+                                    "url": url,
+                                    "label": "phishing",
+                                    "source": "phishstats",
+                                }
+                            )
             print(f"  ✓ Fetched {len(urls)} phishing URLs from PhishStats")
     except Exception as e:
         print(f"  ✗ PhishStats failed: {e}")
@@ -120,15 +128,21 @@ def fetch_phishing_army():
         print("→ Phishing Army...")
         # Try extended blocklist first (more URLs)
         response = requests.get(
-            'https://phishing.army/download/phishing_army_blocklist_extended.txt',
-            timeout=REQUEST_TIMEOUT
+            "https://phishing.army/download/phishing_army_blocklist_extended.txt",
+            timeout=REQUEST_TIMEOUT,
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 domain = line.strip()
-                if domain and not domain.startswith('#'):
+                if domain and not domain.startswith("#"):
                     # Convert domain to URL
-                    urls.append({'url': f'https://{domain}', 'label': 'phishing', 'source': 'phishing_army'})
+                    urls.append(
+                        {
+                            "url": f"https://{domain}",
+                            "label": "phishing",
+                            "source": "phishing_army",
+                        }
+                    )
             print(f"  ✓ Fetched {len(urls)} phishing domains from Phishing Army")
     except Exception as e:
         print(f"  ✗ Phishing Army failed: {e}")
@@ -139,9 +153,9 @@ def fetch_urlabuse():
     """Fetch ALL URLs from URLAbuse (multiple feeds)."""
     urls = []
     feeds = [
-        ('https://urlabuse.com/public/data/phishing_url.txt', 'phishing'),
-        ('https://urlabuse.com/public/data/malware_url.txt', 'malware'),
-        ('https://urlabuse.com/public/data/hacked_url.txt', 'hacked'),
+        ("https://urlabuse.com/public/data/phishing_url.txt", "phishing"),
+        ("https://urlabuse.com/public/data/malware_url.txt", "malware"),
+        ("https://urlabuse.com/public/data/hacked_url.txt", "hacked"),
     ]
 
     try:
@@ -152,10 +166,16 @@ def fetch_urlabuse():
                 response = requests.get(feed_url, timeout=REQUEST_TIMEOUT)
                 if response.status_code == 200:
                     count = 0
-                    for line in response.text.split('\n'):
+                    for line in response.text.split("\n"):
                         url = line.strip()
-                        if url and url.startswith('http'):
-                            urls.append({'url': url, 'label': 'phishing', 'source': f'urlabuse_{feed_type}'})
+                        if url and url.startswith("http"):
+                            urls.append(
+                                {
+                                    "url": url,
+                                    "label": "phishing",
+                                    "source": f"urlabuse_{feed_type}",
+                                }
+                            )
                             count += 1
                     total += count
             except:
@@ -172,14 +192,16 @@ def fetch_threatview():
     try:
         print("→ ThreatView.io...")
         response = requests.get(
-            'https://threatview.io/Downloads/URL-High-Confidence-Feed.txt',
-            timeout=REQUEST_TIMEOUT
+            "https://threatview.io/Downloads/URL-High-Confidence-Feed.txt",
+            timeout=REQUEST_TIMEOUT,
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 url = line.strip()
-                if url and url.startswith('http'):
-                    urls.append({'url': url, 'label': 'phishing', 'source': 'threatview'})
+                if url and url.startswith("http"):
+                    urls.append(
+                        {"url": url, "label": "phishing", "source": "threatview"}
+                    )
             print(f"  ✓ Fetched {len(urls)} malicious URLs from ThreatView")
     except Exception as e:
         print(f"  ✗ ThreatView failed: {e}")
@@ -192,14 +214,16 @@ def fetch_digitalside():
     try:
         print("→ DigitalSide Threat-Intel...")
         response = requests.get(
-            'https://osint.digitalside.it/Threat-Intel/lists/latesturls.txt',
-            timeout=REQUEST_TIMEOUT
+            "https://osint.digitalside.it/Threat-Intel/lists/latesturls.txt",
+            timeout=REQUEST_TIMEOUT,
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 url = line.strip()
-                if url and url.startswith('http'):
-                    urls.append({'url': url, 'label': 'phishing', 'source': 'digitalside'})
+                if url and url.startswith("http"):
+                    urls.append(
+                        {"url": url, "label": "phishing", "source": "digitalside"}
+                    )
             print(f"  ✓ Fetched {len(urls)} malicious URLs from DigitalSide")
     except Exception as e:
         print(f"  ✗ DigitalSide failed: {e}")
@@ -212,20 +236,25 @@ def fetch_malwaredomainlist():
     try:
         print("→ Malware Domain List...")
         response = requests.get(
-            'https://www.malwaredomainlist.com/mdlcsv.php',
-            timeout=REQUEST_TIMEOUT
+            "https://www.malwaredomainlist.com/mdlcsv.php", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
-                if line.strip() and not line.startswith('#'):
-                    parts = line.split(',')
+            for line in response.text.split("\n"):
+                if line.strip() and not line.startswith("#"):
+                    parts = line.split(",")
                     if len(parts) >= 2:
                         url = parts[1].strip('"')
-                        if url and '/' in url:
+                        if url and "/" in url:
                             # It's a path, prepend http
-                            if not url.startswith('http'):
-                                url = f'http://{url}'
-                            urls.append({'url': url, 'label': 'phishing', 'source': 'malwaredomainlist'})
+                            if not url.startswith("http"):
+                                url = f"http://{url}"
+                            urls.append(
+                                {
+                                    "url": url,
+                                    "label": "phishing",
+                                    "source": "malwaredomainlist",
+                                }
+                            )
             print(f"  ✓ Fetched {len(urls)} malicious URLs from Malware Domain List")
     except Exception as e:
         print(f"  ✗ Malware Domain List failed: {e}")
@@ -238,14 +267,13 @@ def fetch_vxvault():
     try:
         print("→ VXVault...")
         response = requests.get(
-            'http://vxvault.net/URL_List.php',
-            timeout=REQUEST_TIMEOUT
+            "http://vxvault.net/URL_List.php", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 url = line.strip()
-                if url and url.startswith('http'):
-                    urls.append({'url': url, 'label': 'phishing', 'source': 'vxvault'})
+                if url and url.startswith("http"):
+                    urls.append({"url": url, "label": "phishing", "source": "vxvault"})
             print(f"  ✓ Fetched {len(urls)} malware URLs from VXVault")
     except Exception as e:
         print(f"  ✗ VXVault failed: {e}")
@@ -258,16 +286,21 @@ def fetch_cybercrime_tracker():
     try:
         print("→ Cybercrime Tracker...")
         response = requests.get(
-            'https://cybercrime-tracker.net/all.php',
-            timeout=REQUEST_TIMEOUT
+            "https://cybercrime-tracker.net/all.php", timeout=REQUEST_TIMEOUT
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 url = line.strip()
-                if url and (url.startswith('http') or '/' in url):
-                    if not url.startswith('http'):
-                        url = f'http://{url}'
-                    urls.append({'url': url, 'label': 'phishing', 'source': 'cybercrime_tracker'})
+                if url and (url.startswith("http") or "/" in url):
+                    if not url.startswith("http"):
+                        url = f"http://{url}"
+                    urls.append(
+                        {
+                            "url": url,
+                            "label": "phishing",
+                            "source": "cybercrime_tracker",
+                        }
+                    )
             print(f"  ✓ Fetched {len(urls)} C2/malware URLs from Cybercrime Tracker")
     except Exception as e:
         print(f"  ✗ Cybercrime Tracker failed: {e}")
@@ -280,15 +313,19 @@ def fetch_mitchellkrogza():
     try:
         print("→ Mitchell Krogza Phishing Database...")
         response = requests.get(
-            'https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-links-ACTIVE.txt',
-            timeout=REQUEST_TIMEOUT
+            "https://raw.githubusercontent.com/mitchellkrogza/Phishing.Database/master/phishing-links-ACTIVE.txt",
+            timeout=REQUEST_TIMEOUT,
         )
         if response.status_code == 200:
-            for line in response.text.split('\n'):
+            for line in response.text.split("\n"):
                 url = line.strip()
-                if url and url.startswith('http'):
-                    urls.append({'url': url, 'label': 'phishing', 'source': 'mitchellkrogza'})
-            print(f"  ✓ Fetched {len(urls)} phishing URLs from Mitchell Krogza Database")
+                if url and url.startswith("http"):
+                    urls.append(
+                        {"url": url, "label": "phishing", "source": "mitchellkrogza"}
+                    )
+            print(
+                f"  ✓ Fetched {len(urls)} phishing URLs from Mitchell Krogza Database"
+            )
     except Exception as e:
         print(f"  ✗ Mitchell Krogza failed: {e}")
     return urls
@@ -301,18 +338,24 @@ def fetch_alienvault_otx():
         print("→ AlienVault OTX...")
         # Fetch recent phishing-related pulses (public API, no key needed for basic access)
         response = requests.get(
-            'https://otx.alienvault.com/api/v1/pulses/subscribed?limit=50&page=1',
-            headers={'Accept': 'application/json'},
-            timeout=REQUEST_TIMEOUT
+            "https://otx.alienvault.com/api/v1/pulses/subscribed?limit=50&page=1",
+            headers={"Accept": "application/json"},
+            timeout=REQUEST_TIMEOUT,
         )
         if response.status_code == 200:
             data = response.json()
-            for pulse in data.get('results', []):
-                for indicator in pulse.get('indicators', []):
-                    if indicator.get('type') == 'URL':
-                        url = indicator.get('indicator', '')
-                        if url.startswith('http'):
-                            urls.append({'url': url, 'label': 'phishing', 'source': 'alienvault_otx'})
+            for pulse in data.get("results", []):
+                for indicator in pulse.get("indicators", []):
+                    if indicator.get("type") == "URL":
+                        url = indicator.get("indicator", "")
+                        if url.startswith("http"):
+                            urls.append(
+                                {
+                                    "url": url,
+                                    "label": "phishing",
+                                    "source": "alienvault_otx",
+                                }
+                            )
             print(f"  ✓ Fetched {len(urls)} URLs from AlienVault OTX")
         else:
             print(f"  ⚠ AlienVault OTX returned status {response.status_code}")
@@ -335,113 +378,411 @@ def generate_legitimate_urls(count: int, unique_suffix: bool = True):
 
     legit_domains = [
         # Top websites
-        'google.com', 'youtube.com', 'facebook.com', 'amazon.com', 'wikipedia.org',
-        'twitter.com', 'instagram.com', 'linkedin.com', 'reddit.com', 'netflix.com',
-        'microsoft.com', 'apple.com', 'adobe.com', 'zoom.us', 'dropbox.com',
-
+        "google.com",
+        "youtube.com",
+        "facebook.com",
+        "amazon.com",
+        "wikipedia.org",
+        "twitter.com",
+        "instagram.com",
+        "linkedin.com",
+        "reddit.com",
+        "netflix.com",
+        "microsoft.com",
+        "apple.com",
+        "adobe.com",
+        "zoom.us",
+        "dropbox.com",
         # News & Media
-        'cnn.com', 'bbc.com', 'nytimes.com', 'theguardian.com', 'reuters.com',
-        'bloomberg.com', 'forbes.com', 'washingtonpost.com', 'wsj.com', 'espn.com',
-        'usatoday.com', 'time.com', 'nationalgeographic.com', 'wired.com', 'techcrunch.com',
-        'npr.org', 'politico.com', 'economist.com', 'ft.com', 'latimes.com',
-        'cbsnews.com', 'nbcnews.com', 'abcnews.go.com', 'foxnews.com', 'msnbc.com',
-        'apnews.com', 'huffpost.com', 'axios.com', 'vox.com', 'buzzfeed.com',
-        'businessinsider.com', 'variety.com', 'hollywoodreporter.com', 'deadline.com', 'ign.com',
-
+        "cnn.com",
+        "bbc.com",
+        "nytimes.com",
+        "theguardian.com",
+        "reuters.com",
+        "bloomberg.com",
+        "forbes.com",
+        "washingtonpost.com",
+        "wsj.com",
+        "espn.com",
+        "usatoday.com",
+        "time.com",
+        "nationalgeographic.com",
+        "wired.com",
+        "techcrunch.com",
+        "npr.org",
+        "politico.com",
+        "economist.com",
+        "ft.com",
+        "latimes.com",
+        "cbsnews.com",
+        "nbcnews.com",
+        "abcnews.go.com",
+        "foxnews.com",
+        "msnbc.com",
+        "apnews.com",
+        "huffpost.com",
+        "axios.com",
+        "vox.com",
+        "buzzfeed.com",
+        "businessinsider.com",
+        "variety.com",
+        "hollywoodreporter.com",
+        "deadline.com",
+        "ign.com",
         # Tech & Development
-        'github.com', 'stackoverflow.com', 'medium.com', 'dev.to', 'gitlab.com',
-        'bitbucket.org', 'npmjs.com', 'pypi.org', 'docker.com', 'kubernetes.io',
-        'aws.amazon.com', 'cloud.google.com', 'azure.microsoft.com', 'heroku.com', 'vercel.com',
-        'digitalocean.com', 'linode.com', 'cloudflare.com', 'netlify.com', 'mongodb.com',
-        'postgres.org', 'redis.io', 'elastic.co', 'jenkins.io', 'circleci.com',
-        'travis-ci.com', 'codepen.io', 'replit.com', 'glitch.com', 'codesandbox.io',
-        'hackernews.com', 'techradar.com', 'arstechnica.com', 'theverge.com', 'engadget.com',
-        'cnet.com', 'zdnet.com', 'venturebeat.com', 'slashdot.org', 'pcmag.com',
-
+        "github.com",
+        "stackoverflow.com",
+        "medium.com",
+        "dev.to",
+        "gitlab.com",
+        "bitbucket.org",
+        "npmjs.com",
+        "pypi.org",
+        "docker.com",
+        "kubernetes.io",
+        "aws.amazon.com",
+        "cloud.google.com",
+        "azure.microsoft.com",
+        "heroku.com",
+        "vercel.com",
+        "digitalocean.com",
+        "linode.com",
+        "cloudflare.com",
+        "netlify.com",
+        "mongodb.com",
+        "postgres.org",
+        "redis.io",
+        "elastic.co",
+        "jenkins.io",
+        "circleci.com",
+        "travis-ci.com",
+        "codepen.io",
+        "replit.com",
+        "glitch.com",
+        "codesandbox.io",
+        "hackernews.com",
+        "techradar.com",
+        "arstechnica.com",
+        "theverge.com",
+        "engadget.com",
+        "cnet.com",
+        "zdnet.com",
+        "venturebeat.com",
+        "slashdot.org",
+        "pcmag.com",
         # E-commerce
-        'ebay.com', 'walmart.com', 'target.com', 'bestbuy.com', 'etsy.com',
-        'aliexpress.com', 'shopify.com', 'wayfair.com', 'homedepot.com', 'lowes.com',
-        'costco.com', 'macys.com', 'nordstrom.com', 'zappos.com', 'overstock.com',
-        'kohls.com', 'jcpenney.com', 'sephora.com', 'ulta.com', 'nike.com',
-        'adidas.com', 'gap.com', 'zara.com', 'hm.com', 'uniqlo.com',
-        'ikea.com', 'crateandbarrel.com', 'williams-sonoma.com', 'bedbathandbeyond.com', 'chewy.com',
-        'newegg.com', 'bhphotovideo.com', 'rei.com', 'dickssportinggoods.com', 'gamestop.com',
-
+        "ebay.com",
+        "walmart.com",
+        "target.com",
+        "bestbuy.com",
+        "etsy.com",
+        "aliexpress.com",
+        "shopify.com",
+        "wayfair.com",
+        "homedepot.com",
+        "lowes.com",
+        "costco.com",
+        "macys.com",
+        "nordstrom.com",
+        "zappos.com",
+        "overstock.com",
+        "kohls.com",
+        "jcpenney.com",
+        "sephora.com",
+        "ulta.com",
+        "nike.com",
+        "adidas.com",
+        "gap.com",
+        "zara.com",
+        "hm.com",
+        "uniqlo.com",
+        "ikea.com",
+        "crateandbarrel.com",
+        "williams-sonoma.com",
+        "bedbathandbeyond.com",
+        "chewy.com",
+        "newegg.com",
+        "bhphotovideo.com",
+        "rei.com",
+        "dickssportinggoods.com",
+        "gamestop.com",
         # Financial Services
-        'paypal.com', 'stripe.com', 'chase.com', 'bankofamerica.com', 'wellsfargo.com',
-        'venmo.com', 'squareup.com', 'citibank.com', 'usbank.com', 'capitalone.com',
-        'americanexpress.com', 'discover.com', 'fidelity.com', 'schwab.com', 'vanguard.com',
-        'etrade.com', 'tdameritrade.com', 'robinhood.com', 'coinbase.com', 'kraken.com',
-        'mint.com', 'creditkarma.com', 'nerdwallet.com', 'experian.com', 'equifax.com',
-        'transunion.com', 'truist.com', 'pnc.com', 'regions.com', 'ally.com',
-
+        "paypal.com",
+        "stripe.com",
+        "chase.com",
+        "bankofamerica.com",
+        "wellsfargo.com",
+        "venmo.com",
+        "squareup.com",
+        "citibank.com",
+        "usbank.com",
+        "capitalone.com",
+        "americanexpress.com",
+        "discover.com",
+        "fidelity.com",
+        "schwab.com",
+        "vanguard.com",
+        "etrade.com",
+        "tdameritrade.com",
+        "robinhood.com",
+        "coinbase.com",
+        "kraken.com",
+        "mint.com",
+        "creditkarma.com",
+        "nerdwallet.com",
+        "experian.com",
+        "equifax.com",
+        "transunion.com",
+        "truist.com",
+        "pnc.com",
+        "regions.com",
+        "ally.com",
         # Email & Communication
-        'gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'protonmail.com',
-        'zoho.com', 'aol.com', 'mail.com', 'gmx.com', 'tutanota.com',
-        'fastmail.com', 'yandex.com', 'disroot.org', 'mailfence.com', 'runbox.com',
-
+        "gmail.com",
+        "outlook.com",
+        "yahoo.com",
+        "icloud.com",
+        "protonmail.com",
+        "zoho.com",
+        "aol.com",
+        "mail.com",
+        "gmx.com",
+        "tutanota.com",
+        "fastmail.com",
+        "yandex.com",
+        "disroot.org",
+        "mailfence.com",
+        "runbox.com",
         # Education
-        'coursera.org', 'udemy.com', 'khanacademy.org', 'edx.org', 'mit.edu',
-        'stanford.edu', 'harvard.edu', 'berkeley.edu', 'yale.edu', 'oxford.ac.uk',
-        'cambridge.ac.uk', 'princeton.edu', 'columbia.edu', 'cornell.edu', 'upenn.edu',
-        'caltech.edu', 'uchicago.edu', 'northwestern.edu', 'duke.edu', 'jhu.edu',
-        'umich.edu', 'ucla.edu', 'ucsd.edu', 'ucsb.edu', 'uci.edu',
-        'uw.edu', 'utexas.edu', 'wisc.edu', 'uiuc.edu', 'umn.edu',
-        'codecademy.com', 'pluralsight.com', 'skillshare.com', 'udacity.com', 'datacamp.com',
-        'brilliant.org', 'duolingo.com', 'memrise.com', 'babbel.com', 'rosettastone.com',
-
+        "coursera.org",
+        "udemy.com",
+        "khanacademy.org",
+        "edx.org",
+        "mit.edu",
+        "stanford.edu",
+        "harvard.edu",
+        "berkeley.edu",
+        "yale.edu",
+        "oxford.ac.uk",
+        "cambridge.ac.uk",
+        "princeton.edu",
+        "columbia.edu",
+        "cornell.edu",
+        "upenn.edu",
+        "caltech.edu",
+        "uchicago.edu",
+        "northwestern.edu",
+        "duke.edu",
+        "jhu.edu",
+        "umich.edu",
+        "ucla.edu",
+        "ucsd.edu",
+        "ucsb.edu",
+        "uci.edu",
+        "uw.edu",
+        "utexas.edu",
+        "wisc.edu",
+        "uiuc.edu",
+        "umn.edu",
+        "codecademy.com",
+        "pluralsight.com",
+        "skillshare.com",
+        "udacity.com",
+        "datacamp.com",
+        "brilliant.org",
+        "duolingo.com",
+        "memrise.com",
+        "babbel.com",
+        "rosettastone.com",
         # Entertainment & Streaming
-        'spotify.com', 'twitch.tv', 'tiktok.com', 'vimeo.com', 'soundcloud.com',
-        'hulu.com', 'disneyplus.com', 'hbo.com', 'primevideo.com', 'crunchyroll.com',
-        'pandora.com', 'imgur.com', 'deviantart.com', 'behance.net', 'artstation.com',
-        'pinterest.com', 'flickr.com', 'unsplash.com', 'pexels.com', 'giphy.com',
-        'dailymotion.com', 'metacafe.com', 'rumble.com', 'odysee.com', 'dtube.video',
-        'imdb.com', 'rottentomatoes.com', 'letterboxd.com', 'allmovie.com', 'moviefone.com',
-
+        "spotify.com",
+        "twitch.tv",
+        "tiktok.com",
+        "vimeo.com",
+        "soundcloud.com",
+        "hulu.com",
+        "disneyplus.com",
+        "hbo.com",
+        "primevideo.com",
+        "crunchyroll.com",
+        "pandora.com",
+        "imgur.com",
+        "deviantart.com",
+        "behance.net",
+        "artstation.com",
+        "pinterest.com",
+        "flickr.com",
+        "unsplash.com",
+        "pexels.com",
+        "giphy.com",
+        "dailymotion.com",
+        "metacafe.com",
+        "rumble.com",
+        "odysee.com",
+        "dtube.video",
+        "imdb.com",
+        "rottentomatoes.com",
+        "letterboxd.com",
+        "allmovie.com",
+        "moviefone.com",
         # Cloud & SaaS
-        'salesforce.com', 'slack.com', 'notion.so', 'trello.com', 'asana.com',
-        'atlassian.com', 'monday.com', 'zendesk.com', 'hubspot.com', 'mailchimp.com',
-        'airtable.com', 'figma.com', 'canva.com', 'miro.com', 'clickup.com',
-        'freshdesk.com', 'intercom.com', 'drift.com', 'typeform.com', 'surveymonkey.com',
-        'jotform.com', 'wufoo.com', 'formstack.com', 'cognito.com', 'calendly.com',
-        'docusign.com', 'hellosign.com', 'adobe.io', 'smartsheet.com', 'workday.com',
-
+        "salesforce.com",
+        "slack.com",
+        "notion.so",
+        "trello.com",
+        "asana.com",
+        "atlassian.com",
+        "monday.com",
+        "zendesk.com",
+        "hubspot.com",
+        "mailchimp.com",
+        "airtable.com",
+        "figma.com",
+        "canva.com",
+        "miro.com",
+        "clickup.com",
+        "freshdesk.com",
+        "intercom.com",
+        "drift.com",
+        "typeform.com",
+        "surveymonkey.com",
+        "jotform.com",
+        "wufoo.com",
+        "formstack.com",
+        "cognito.com",
+        "calendly.com",
+        "docusign.com",
+        "hellosign.com",
+        "adobe.io",
+        "smartsheet.com",
+        "workday.com",
         # Travel & Transportation
-        'booking.com', 'airbnb.com', 'expedia.com', 'tripadvisor.com', 'kayak.com',
-        'uber.com', 'lyft.com', 'delta.com', 'united.com', 'southwest.com',
-        'americanairlines.com', 'jetblue.com', 'spirit.com', 'frontier.com', 'allegiant.com',
-        'hotels.com', 'priceline.com', 'hotwire.com', 'orbitz.com', 'travelocity.com',
-        'vrbo.com', 'homeaway.com', 'hostelworld.com', 'agoda.com', 'rentalcars.com',
-        'skyscanner.com', 'momondo.com', 'kiwi.com', 'dohop.com', 'rome2rio.com',
-
+        "booking.com",
+        "airbnb.com",
+        "expedia.com",
+        "tripadvisor.com",
+        "kayak.com",
+        "uber.com",
+        "lyft.com",
+        "delta.com",
+        "united.com",
+        "southwest.com",
+        "americanairlines.com",
+        "jetblue.com",
+        "spirit.com",
+        "frontier.com",
+        "allegiant.com",
+        "hotels.com",
+        "priceline.com",
+        "hotwire.com",
+        "orbitz.com",
+        "travelocity.com",
+        "vrbo.com",
+        "homeaway.com",
+        "hostelworld.com",
+        "agoda.com",
+        "rentalcars.com",
+        "skyscanner.com",
+        "momondo.com",
+        "kiwi.com",
+        "dohop.com",
+        "rome2rio.com",
         # Government & Public
-        'usa.gov', 'irs.gov', 'uscis.gov', 'usps.com', 'whitehouse.gov',
-        'congress.gov', 'senate.gov', 'house.gov', 'fda.gov', 'cdc.gov',
-        'nih.gov', 'nasa.gov', 'noaa.gov', 'usgs.gov', 'nps.gov',
-        'state.gov', 'defense.gov', 'va.gov', 'opm.gov', 'gsa.gov',
-        'dmv.org', 'medicare.gov', 'socialsecurity.gov', 'weather.gov', 'ready.gov',
-
+        "usa.gov",
+        "irs.gov",
+        "uscis.gov",
+        "usps.com",
+        "whitehouse.gov",
+        "congress.gov",
+        "senate.gov",
+        "house.gov",
+        "fda.gov",
+        "cdc.gov",
+        "nih.gov",
+        "nasa.gov",
+        "noaa.gov",
+        "usgs.gov",
+        "nps.gov",
+        "state.gov",
+        "defense.gov",
+        "va.gov",
+        "opm.gov",
+        "gsa.gov",
+        "dmv.org",
+        "medicare.gov",
+        "socialsecurity.gov",
+        "weather.gov",
+        "ready.gov",
         # Health & Medical
-        'mayoclinic.org', 'clevelandclinic.org', 'hopkinsmedicine.org', 'webmd.com', 'healthline.com',
-        'medlineplus.gov', 'drugs.com', 'rxlist.com', 'cvs.com', 'walgreens.com',
-        'rite-aid.com', 'express-scripts.com', 'goodrx.com', 'ro.co',
-        'teladoc.com', 'mdlive.com', 'zocdoc.com', 'healthgrades.com', 'vitals.com',
-
+        "mayoclinic.org",
+        "clevelandclinic.org",
+        "hopkinsmedicine.org",
+        "webmd.com",
+        "healthline.com",
+        "medlineplus.gov",
+        "drugs.com",
+        "rxlist.com",
+        "cvs.com",
+        "walgreens.com",
+        "rite-aid.com",
+        "express-scripts.com",
+        "goodrx.com",
+        "ro.co",
+        "teladoc.com",
+        "mdlive.com",
+        "zocdoc.com",
+        "healthgrades.com",
+        "vitals.com",
         # Food & Delivery
-        'doordash.com', 'ubereats.com', 'grubhub.com', 'postmates.com', 'seamless.com',
-        'instacart.com', 'shipt.com', 'freshdirect.com', 'peapod.com',
-        'dominos.com', 'pizzahut.com', 'papajohns.com', 'mcdonalds.com', 'starbucks.com',
-        'chipotle.com', 'subway.com', 'wendys.com', 'tacobell.com', 'kfc.com',
-
+        "doordash.com",
+        "ubereats.com",
+        "grubhub.com",
+        "postmates.com",
+        "seamless.com",
+        "instacart.com",
+        "shipt.com",
+        "freshdirect.com",
+        "peapod.com",
+        "dominos.com",
+        "pizzahut.com",
+        "papajohns.com",
+        "mcdonalds.com",
+        "starbucks.com",
+        "chipotle.com",
+        "subway.com",
+        "wendys.com",
+        "tacobell.com",
+        "kfc.com",
         # Social & Community
-        'discord.com', 'telegram.org', 'signal.org', 'whatsapp.com', 'snapchat.com',
-        'tumblr.com', 'meetup.com', 'nextdoor.com', 'yelp.com', 'foursquare.com',
-        'quora.com', 'answers.com', 'ask.com',
-
+        "discord.com",
+        "telegram.org",
+        "signal.org",
+        "whatsapp.com",
+        "snapchat.com",
+        "tumblr.com",
+        "meetup.com",
+        "nextdoor.com",
+        "yelp.com",
+        "foursquare.com",
+        "quora.com",
+        "answers.com",
+        "ask.com",
         # Gaming
-        'steam.com', 'epicgames.com', 'gog.com', 'origin.com', 'ubisoft.com',
-        'ea.com', 'blizzard.com', 'riotgames.com', 'valvesoftware.com', 'minecraft.net',
-        'playstation.com', 'xbox.com', 'nintendo.com', 'roblox.com', 'fortnite.com'
+        "steam.com",
+        "epicgames.com",
+        "gog.com",
+        "origin.com",
+        "ubisoft.com",
+        "ea.com",
+        "blizzard.com",
+        "riotgames.com",
+        "valvesoftware.com",
+        "minecraft.net",
+        "playstation.com",
+        "xbox.com",
+        "nintendo.com",
+        "roblox.com",
+        "fortnite.com",
     ]
 
     print(f"→ Generating {count} legitimate URLs...")
@@ -450,10 +791,23 @@ def generate_legitimate_urls(count: int, unique_suffix: bool = True):
     timestamp = int(datetime.now().timestamp())
     random.seed(timestamp)
     shuffled_domains = random.sample(legit_domains, len(legit_domains))
-    common_paths = ['', '/about', '/contact', '/help', '/support', '/faq', '/terms', '/privacy', '/login', '/signup']
+    common_paths = [
+        "",
+        "/about",
+        "/contact",
+        "/help",
+        "/support",
+        "/faq",
+        "/terms",
+        "/privacy",
+        "/login",
+        "/signup",
+    ]
 
     # Generate unique suffix for this batch to prevent deduplication
-    batch_id = hashlib.md5(str(timestamp).encode()).hexdigest()[:8] if unique_suffix else ''
+    batch_id = (
+        hashlib.md5(str(timestamp).encode()).hexdigest()[:8] if unique_suffix else ""
+    )
 
     for domain in shuffled_domains:
         if len(urls) >= count:
@@ -461,16 +815,40 @@ def generate_legitimate_urls(count: int, unique_suffix: bool = True):
 
         # Add root URL (with optional unique query param for dedup resistance)
         if unique_suffix:
-            urls.append({'url': f'https://{domain}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+            urls.append(
+                {
+                    "url": f"https://{domain}?ref={batch_id}",
+                    "label": "legitimate",
+                    "source": "known_good",
+                }
+            )
         else:
-            urls.append({'url': f'https://{domain}', 'label': 'legitimate', 'source': 'known_good'})
+            urls.append(
+                {
+                    "url": f"https://{domain}",
+                    "label": "legitimate",
+                    "source": "known_good",
+                }
+            )
 
         # Add www variant
         if len(urls) < count:
             if unique_suffix:
-                urls.append({'url': f'https://www.{domain}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+                urls.append(
+                    {
+                        "url": f"https://www.{domain}?ref={batch_id}",
+                        "label": "legitimate",
+                        "source": "known_good",
+                    }
+                )
             else:
-                urls.append({'url': f'https://www.{domain}', 'label': 'legitimate', 'source': 'known_good'})
+                urls.append(
+                    {
+                        "url": f"https://www.{domain}",
+                        "label": "legitimate",
+                        "source": "known_good",
+                    }
+                )
 
         # Add some path variations
         for path in random.sample(common_paths, min(3, len(common_paths))):
@@ -478,12 +856,90 @@ def generate_legitimate_urls(count: int, unique_suffix: bool = True):
                 break
             if path:
                 if unique_suffix:
-                    urls.append({'url': f'https://{domain}{path}?ref={batch_id}', 'label': 'legitimate', 'source': 'known_good'})
+                    urls.append(
+                        {
+                            "url": f"https://{domain}{path}?ref={batch_id}",
+                            "label": "legitimate",
+                            "source": "known_good",
+                        }
+                    )
                 else:
-                    urls.append({'url': f'https://{domain}{path}', 'label': 'legitimate', 'source': 'known_good'})
+                    urls.append(
+                        {
+                            "url": f"https://{domain}{path}",
+                            "label": "legitimate",
+                            "source": "known_good",
+                        }
+                    )
 
     print(f"  ✓ Generated {len(urls)} legitimate URLs")
     return urls
+
+
+def fetch_tranco_legitimate_urls(count: int, existing_urls: set = None):
+    """
+    Fetch legitimate URLs from the Tranco top sites list.
+
+    Uses the Tranco top 1M ranking (research-grade, updated daily) to source
+    fresh legitimate domains that survive master deduplication.
+
+    Args:
+        count: Number of legitimate URLs to generate
+        existing_urls: Set of URLs already in the master dataset (for dedup)
+
+    Returns:
+        List of dicts with url, label, source keys
+    """
+    import random
+    import zipfile
+    import io
+    import csv
+
+    if existing_urls is None:
+        existing_urls = set()
+
+    print(f"→ Fetching {count} legitimate URLs from Tranco top sites...")
+
+    try:
+        response = requests.get(
+            "https://tranco-list.eu/top-1m.csv.zip", timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+
+        # Unzip in memory
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            csv_filename = zf.namelist()[0]
+            with zf.open(csv_filename) as f:
+                reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8"))
+                # Format: rank,domain — take top 100K (high confidence legitimate)
+                domains = []
+                for row in reader:
+                    if len(row) >= 2:
+                        rank = int(row[0])
+                        domain = row[1].strip()
+                        if rank <= 100000 and domain:
+                            domains.append(domain)
+
+        print(f"  ✓ Downloaded {len(domains)} Tranco domains")
+
+        # Filter out domains already in master
+        urls = []
+        random.shuffle(domains)
+
+        for domain in domains:
+            if len(urls) >= count:
+                break
+            url = f"https://{domain}"
+            if url not in existing_urls:
+                urls.append({"url": url, "label": "legitimate", "source": "tranco"})
+
+        print(f"  ✓ {len(urls)} new Tranco URLs (after filtering existing)")
+        return urls
+
+    except Exception as e:
+        print(f"  ✗ Tranco download failed: {e}")
+        print(f"  → Falling back to hardcoded domains")
+        return []
 
 
 def fetch_urls(output_file: str, target_count: int = 1000):
@@ -507,18 +963,39 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     print("=" * 80)
     print()
 
-    # Load existing URLs to avoid duplicates
+    # Load existing URLs to avoid duplicates + compute master balance
     existing_urls = set()
+    master_phishing_count = 0
+    master_legit_count = 0
     master_file = "data/processed/phishing_features_complete.csv"
     if os.path.exists(master_file):
         try:
             df_existing = pd.read_csv(master_file)
-            if 'url' in df_existing.columns:
-                existing_urls = set(df_existing['url'].tolist())
-                print(f"📂 Found {len(existing_urls)} existing URLs in master dataset")
-                print(f"   Will fetch only NEW urls to avoid duplicates\n")
+            if "url" in df_existing.columns:
+                existing_urls = set(df_existing["url"].tolist())
+                print(f"Found {len(existing_urls)} existing URLs in master dataset")
+                print(f"   Will fetch only NEW urls to avoid duplicates")
+            # Compute master class balance
+            if "label" in df_existing.columns:
+                if df_existing["label"].dtype == "object":
+                    master_phishing_count = (
+                        df_existing["label"].str.lower() == "phishing"
+                    ).sum()
+                else:
+                    master_phishing_count = (df_existing["label"] == 1).sum()
+                master_legit_count = len(df_existing) - master_phishing_count
+                master_total = master_phishing_count + master_legit_count
+                master_legit_pct = (
+                    (master_legit_count / master_total * 100)
+                    if master_total > 0
+                    else 50.0
+                )
+                print(
+                    f"   Master balance: {master_phishing_count} phishing / {master_legit_count} legitimate ({master_legit_pct:.1f}% legit)"
+                )
+            print()
         except Exception as e:
-            print(f"⚠️  Could not load existing URLs: {e}\n")
+            print(f"Could not load existing URLs: {e}\n")
 
     # Fetch from ALL sources (maximize data collection)
     print("=" * 80)
@@ -565,37 +1042,82 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     total_fetched = len(df_phishing)
 
     # Remove duplicates within fetched data
-    df_phishing = df_phishing.drop_duplicates(subset=['url'])
+    df_phishing = df_phishing.drop_duplicates(subset=["url"])
     after_internal_dedup = len(df_phishing)
 
     print(f"Total URLs fetched: {total_fetched}")
-    print(f"After internal dedup: {after_internal_dedup} (removed {total_fetched - after_internal_dedup})")
+    print(
+        f"After internal dedup: {after_internal_dedup} (removed {total_fetched - after_internal_dedup})"
+    )
 
     # Remove URLs that exist in master
-    df_phishing_new = df_phishing[~df_phishing['url'].isin(existing_urls)]
+    df_phishing_new = df_phishing[~df_phishing["url"].isin(existing_urls)]
     after_master_dedup = len(df_phishing_new)
 
-    print(f"After master dedup: {after_master_dedup} (removed {after_internal_dedup - after_master_dedup} duplicates)")
+    print(
+        f"After master dedup: {after_master_dedup} (removed {after_internal_dedup - after_master_dedup} duplicates)"
+    )
 
-    # Generate legitimate URLs (no unique suffix for batch mode - dedup is desired)
+    # Adaptive batch ratio based on master balance
+    # If master is imbalanced, over-sample the minority class to catch up
+    master_total = master_phishing_count + master_legit_count
+    if master_total > 0:
+        master_legit_ratio = master_legit_count / master_total
+    else:
+        master_legit_ratio = 0.5  # No master yet, default 50/50
+
+    if master_legit_ratio < 0.45:
+        # Master needs more legitimate URLs — increase legit share
+        # Cap: at least 20% of batch is phishing (still need fresh threat data)
+        n_phish = max(int(target_count * 0.20), 1)
+        n_legit = target_count - n_phish
+        adaptive_msg = f"Adaptive split: {n_phish} phishing + {n_legit} legitimate (master at {master_legit_ratio*100:.1f}% legit)"
+    else:
+        # Master is balanced enough — standard 50/50
+        n_phish = target_count // 2
+        n_legit = target_count - n_phish
+        adaptive_msg = (
+            f"Standard 50/50 split (master at {master_legit_ratio*100:.1f}% legit)"
+        )
+
     print()
-    legit_needed = target_count // 2
-    legit_urls = generate_legitimate_urls(legit_needed, unique_suffix=False)
-    df_legit = pd.DataFrame(legit_urls)
-    df_legit = df_legit.drop_duplicates(subset=['url'])
+    print(f"BATCH RATIO: {adaptive_msg}")
 
-    # Balance classes - aim for 50:50 split
-    n_per_class = target_count // 2
+    # Generate legitimate URLs — Tranco first, hardcoded as supplement
+    print()
+    tranco_urls = fetch_tranco_legitimate_urls(n_legit, existing_urls)
+    df_tranco = (
+        pd.DataFrame(tranco_urls)
+        if tranco_urls
+        else pd.DataFrame(columns=["url", "label", "source"])
+    )
 
-    df_phish_sample = df_phishing_new.sample(
-        n=min(len(df_phishing_new), n_per_class),
-        random_state=42
-    ) if len(df_phishing_new) > 0 else df_phishing_new
+    # Supplement with hardcoded domains if Tranco didn't return enough
+    tranco_count = len(df_tranco)
+    remaining_needed = n_legit - tranco_count
+    if remaining_needed > 0:
+        hardcoded_urls = generate_legitimate_urls(remaining_needed, unique_suffix=False)
+        df_hardcoded = pd.DataFrame(hardcoded_urls)
+        df_legit = pd.concat([df_tranco, df_hardcoded], ignore_index=True)
+    else:
+        df_legit = df_tranco
 
-    df_legit_sample = df_legit.sample(
-        n=min(len(df_legit), n_per_class),
-        random_state=42
-    ) if len(df_legit) > 0 else df_legit
+    df_legit = df_legit.drop_duplicates(subset=["url"])
+    # Also filter legit URLs against master
+    df_legit = df_legit[~df_legit["url"].isin(existing_urls)]
+
+    # Sample phishing and legitimate to target counts
+    df_phish_sample = (
+        df_phishing_new.sample(n=min(len(df_phishing_new), n_phish), random_state=42)
+        if len(df_phishing_new) > 0
+        else df_phishing_new
+    )
+
+    df_legit_sample = (
+        df_legit.sample(n=min(len(df_legit), n_legit), random_state=42)
+        if len(df_legit) > 0
+        else df_legit
+    )
 
     # Combine
     df_final = pd.concat([df_phish_sample, df_legit_sample], ignore_index=True)
@@ -618,16 +1140,33 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     print("Source Statistics:")
     for source, count in sorted(source_stats.items(), key=lambda x: -x[1]):
         print(f"  {source:25} {count:>6} URLs")
+    if tranco_count > 0:
+        print(f"  {'Tranco (legitimate)':25} {tranco_count:>6} URLs")
     print()
     print(f"Total phishing URLs fetched: {total_fetched}")
     print(f"Unique phishing URLs: {after_internal_dedup}")
     print(f"NEW phishing URLs (not in master): {after_master_dedup}")
     print()
+    print("MASTER BALANCE:")
+    if master_total > 0:
+        print(
+            f"  Current: {master_phishing_count} phishing / {master_legit_count} legitimate ({master_legit_count/master_total*100:.1f}% legit)"
+        )
+    else:
+        print(f"  No master dataset yet")
+    print(f"  {adaptive_msg}")
+    print()
     print("FINAL DATASET:")
     print(f"  Phishing URLs: {len(df_phish_sample)}")
-    print(f"  Legitimate URLs: {len(df_legit_sample)}")
+    print(
+        f"  Legitimate URLs: {len(df_legit_sample)} (Tranco: {tranco_count}, Hardcoded: {len(df_legit_sample) - min(tranco_count, len(df_legit_sample))})"
+    )
     print(f"  Total: {len(df_final)}")
-    print(f"  Balance: {len(df_legit_sample)/len(df_final)*100:.1f}% legitimate" if len(df_final) > 0 else "")
+    print(
+        f"  Balance: {len(df_legit_sample)/len(df_final)*100:.1f}% legitimate"
+        if len(df_final) > 0
+        else ""
+    )
     print()
     print(f"Saved to: {output_file}")
     print("=" * 80)
