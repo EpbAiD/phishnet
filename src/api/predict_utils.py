@@ -9,7 +9,12 @@ from typing import Tuple
 
 import pandas as pd
 
-from src.api.model_loader import load_url_model, load_whois_model, load_dns_model
+from src.api.model_loader import (
+    load_url_model,
+    load_whois_model,
+    load_dns_model,
+    get_model_names,
+)
 from src.features.url_features import extract_single_url_features
 from src.features.whois import extract_single_whois_features
 from src.features.dns_ipwhois import extract_single_domain_features
@@ -91,7 +96,8 @@ def predict_url_risk(url: str) -> Tuple[float, float, str, dict]:
         "features_after_preprocessing": len(features),
     }
 
-    return float(proba[0]), float(latency_ms), "catboost_url_v1", debug
+    model_label = f"{get_model_names()['url']}_url_v1"
+    return float(proba[0]), float(latency_ms), model_label, debug
 
 
 # ---------------------------------------------------------------
@@ -138,7 +144,8 @@ def predict_whois_risk(url: str) -> Tuple[float, float, str, dict]:
         "features_after_preprocessing": len(features),
     }
 
-    return float(proba[0]), float(latency_ms), "catboost_whois_v1", debug
+    model_label = f"{get_model_names()['whois']}_whois_v1"
+    return float(proba[0]), float(latency_ms), model_label, debug
 
 
 # ---------------------------------------------------------------
@@ -185,7 +192,8 @@ def predict_dns_risk(url: str) -> Tuple[float, float, str, dict]:
         "features_after_preprocessing": len(features),
     }
 
-    return float(proba[0]), float(latency_ms), "catboost_dns_v1", debug
+    model_label = f"{get_model_names()['dns']}_dns_v1"
+    return float(proba[0]), float(latency_ms), model_label, debug
 
 
 # ---------------------------------------------------------------
@@ -296,7 +304,11 @@ def predict_ensemble_risk_with_weights(
         },
         "ensemble": {
             "weighted_score": ensemble_prob,
-            "formula": f"{url_weight:.0%}*{url_prob:.4f} + {whois_weight:.0%}*{whois_prob:.4f} + {dns_weight:.0%}*{dns_prob:.4f}",
+            "formula": (
+                f"{url_weight:.0%}*{url_prob:.4f} + "
+                f"{whois_weight:.0%}*{whois_prob:.4f} + "
+                f"{dns_weight:.0%}*{dns_prob:.4f}"
+            ),
             "config_source": (
                 "custom_weights" if weights else "models/production_metadata.json"
             ),
@@ -306,7 +318,7 @@ def predict_ensemble_risk_with_weights(
     return (
         float(ensemble_prob),
         float(total_latency_ms),
-        f"ensemble_custom_weights",
+        "ensemble_custom_weights",
         debug,
     )
 
