@@ -16,7 +16,7 @@ stages:
   # STAGE 1: Data Collection
   data_collection:
     frequency: "twice_daily" # Every 12 hours for faster data growth
-    num_urls: 1000           # URLs per collection - 50:50 balanced (phishing:legitimate)
+    num_urls: 500            # URLs per collection - 50:50 balanced (phishing:legitimate) - reduced from 1000 to prevent SSH timeouts
     enabled: true
 
   # STAGE 2: Feature Extraction (VM Processing)

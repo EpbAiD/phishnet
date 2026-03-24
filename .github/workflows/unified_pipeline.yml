@@ -229,16 +229,19 @@ jobs:
 
       - name: EC2 Processing (DNS/WHOIS extraction + accumulation)
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          BATCH_DATE: ${{ env.batch_date }}
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 60s
+          timeout: 120s
           command_timeout: 360m
+          envs: BATCH_DATE
           script: |
             cd /home/ec2-user/phishnet
             aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
-            python3.8 scripts/extract_vm_features_aws.py ${{ env.batch_date }}
+            python3.8 scripts/extract_vm_features_aws.py $BATCH_DATE
             echo "✅ EC2 processing complete - master dataset updated in S3"
 
       - name: Stop EC2 instance

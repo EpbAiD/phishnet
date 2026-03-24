@@ -22,7 +22,7 @@ jobs:
   daily-retrain:
     name: "Daily Model Retraining"
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout code
