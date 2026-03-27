@@ -14,6 +14,7 @@ import time
 import json
 import signal
 import threading
+import multiprocessing
 import pandas as pd
 import boto3
 from pathlib import Path
@@ -22,13 +23,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.features.dns_ipwhois import extract_single_domain_features
-from src.features.whois import extract_single_whois_features
+from src.features.whois import extract_whois_features, extract_domain_from_url
 
 S3_BUCKET = "phishnet-data"
 AWS_REGION = "us-east-1"
 CHECKPOINT_EVERY = 50  # Save progress every N URLs
 HEARTBEAT_INTERVAL = 30  # Print heartbeat every N seconds to keep SSH alive
-PER_URL_TIMEOUT = 60  # Max seconds per URL for DNS+WHOIS combined
+PER_URL_TIMEOUT = 45  # Max seconds per URL - reduced to kill faster
+
+
+def _whois_for_url(url):
+    """Extract WHOIS features directly (no cache read/write per URL)."""
+    domain = extract_domain_from_url(url) or url
+    feats = extract_whois_features(domain, mode="single")
+    feats.pop("domain", None)
+    return feats
 
 
 class Heartbeat:
@@ -66,31 +75,38 @@ class Heartbeat:
         self.stop()
 
 
-def _extract_with_timeout(func, url, timeout=PER_URL_TIMEOUT):
-    """Run extraction function with a timeout to prevent hanging."""
-    result = [None]
-    error = [None]
+def _run_in_process(func, url, timeout=PER_URL_TIMEOUT):
+    """Run extraction in a subprocess that can be killed on timeout."""
+    ctx = multiprocessing.get_context("fork")
+    q = ctx.Queue()
 
-    def target():
+    def target(queue, fn, u):
         try:
-            result[0] = func(url)
+            result = fn(u)
+            queue.put(("ok", result))
         except Exception as e:
-            error[0] = e
+            queue.put(("error", str(e)))
 
-    t = threading.Thread(target=target)
-    t.start()
-    t.join(timeout)
+    p = ctx.Process(target=target, args=(q, func, url))
+    p.start()
+    p.join(timeout)
 
-    if t.is_alive():
-        # Thread is stuck - return empty features
-        print(f"  ⏰ TIMEOUT after {timeout}s for {url[:50]}", flush=True)
+    if p.is_alive():
+        p.kill()
+        p.join(2)
+        print(f"  ⏰ TIMEOUT after {timeout}s for {url[:50]} (process killed)", flush=True)
         return {}
 
-    if error[0]:
-        print(f"  ❌ Error for {url[:50]}: {error[0]}", flush=True)
+    if q.empty():
+        print(f"  ❌ Process died for {url[:50]}", flush=True)
         return {}
 
-    return result[0] or {}
+    status, data = q.get_nowait()
+    if status == "error":
+        print(f"  ❌ Error for {url[:50]}: {data}", flush=True)
+        return {}
+
+    return data or {}
 
 
 def extract_and_accumulate(batch_date: str):
@@ -163,7 +179,7 @@ def extract_and_accumulate(batch_date: str):
                 hb.update("DNS extraction", idx + 1, total_urls)
                 print(f"[{idx+1}/{total_urls}] {row['url'][:50]}...", flush=True)
 
-                features = _extract_with_timeout(extract_single_domain_features, row['url'])
+                features = _run_in_process(extract_single_domain_features, row['url'])
                 features['url'] = row['url']
                 dns_features.append(features)
 
@@ -193,7 +209,7 @@ def extract_and_accumulate(batch_date: str):
                 hb.update("WHOIS extraction", idx + 1, total_urls)
                 print(f"[{idx+1}/{total_urls}] {row['url'][:50]}...", flush=True)
 
-                features = _extract_with_timeout(extract_single_whois_features, row['url'])
+                features = _run_in_process(_whois_for_url, row['url'])
                 features['url'] = row['url']
                 whois_features.append(features)
 
