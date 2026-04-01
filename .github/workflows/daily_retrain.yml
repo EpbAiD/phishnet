@@ -24,9 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -350,6 +355,37 @@ jobs:
           echo ""
           echo "Production metadata:"
           cat models/production_metadata.json
+
+      - name: Commit production training record
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          # Get total training samples from metadata
+          TOTAL_URLS=$(python3 -c "
+          import json
+          with open('models/production_metadata.json') as f:
+              m = json.load(f)
+          # Sum across all feature types from the master CSVs
+          import pandas as pd
+          total = 0
+          for ft in ['url', 'dns', 'whois']:
+              try:
+                  df = pd.read_csv(f'data/processed/{ft}_features_master.csv')
+                  total = max(total, len(df))
+              except: pass
+          print(total)
+          ")
+
+          echo "Total training URLs: $TOTAL_URLS"
+
+          # Configure git
+          git config user.name "EpbAiD"
+          git config user.email "eeshanpbhanap@gmail.com"
+
+          # Commit production metadata
+          cp models/production_metadata.json .github/production_metadata.json
+          git add .github/production_metadata.json
+          git commit -m "[production] Train models on ${TOTAL_URLS} URLs" || echo "Nothing to commit"
+          git push origin main || echo "Push failed - will retry next run"
 
       - name: Summary
         run: |
