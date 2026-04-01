@@ -67,6 +67,10 @@ jobs:
           aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv \
             data/processed/whois_features_master.csv 2>/dev/null || echo "No WHOIS master found"
 
+          # Download previous production metadata for AUC comparison
+          aws s3 cp s3://${{ env.S3_BUCKET }}/models/production_metadata.json \
+            data/processed/previous_production_metadata.json 2>/dev/null || echo "No previous metadata"
+
           # Show dataset sizes
           echo ""
           echo "Dataset sizes:"
@@ -76,6 +80,50 @@ jobs:
               echo "  $(basename $f): $rows rows"
             fi
           done
+
+      - name: Purge stale data (90-day rolling window)
+        run: |
+          echo "=============================================="
+          echo "PURGING DATA OLDER THAN 90 DAYS"
+          echo "=============================================="
+
+          python3 << 'EOF'
+          import pandas as pd
+          from datetime import datetime, timedelta
+
+          cutoff = datetime.now() - timedelta(days=90)
+          print(f"Cutoff date: {cutoff.strftime('%Y-%m-%d')}")
+
+          for feature_type in ['url', 'dns', 'whois']:
+              filepath = f'data/processed/{feature_type}_features_master.csv'
+              try:
+                  df = pd.read_csv(filepath)
+                  before = len(df)
+
+                  if 'collected_at' in df.columns:
+                      df['collected_at'] = pd.to_datetime(df['collected_at'], errors='coerce')
+                      # Keep rows without dates (legacy) or within 90 days
+                      df = df[df['collected_at'].isna() | (df['collected_at'] >= cutoff)]
+                      purged = before - len(df)
+                      if purged > 0:
+                          df.to_csv(filepath, index=False)
+                          print(f"  {feature_type.upper()}: purged {purged} stale rows, {len(df)} remaining")
+                      else:
+                          print(f"  {feature_type.upper()}: no stale rows (all within 90 days or no timestamps)")
+                  else:
+                      print(f"  {feature_type.upper()}: no collected_at column yet (legacy data, keeping all {before} rows)")
+              except Exception as e:
+                  print(f"  {feature_type.upper()}: Error - {e}")
+          EOF
+
+          # Re-upload purged masters to S3
+          for ft in url dns whois; do
+            f="data/processed/${ft}_features_master.csv"
+            if [ -f "$f" ]; then
+              aws s3 cp "$f" "s3://${{ env.S3_BUCKET }}/master/${ft}_features_master.csv"
+            fi
+          done
+          echo "✅ Purged masters re-uploaded to S3"
 
       - name: Check data diversity
         id: diversity
@@ -333,16 +381,216 @@ jobs:
 
           python3 scripts/test_ensemble_combinations.py || echo "Ensemble testing completed with warnings"
 
-      - name: Upload models to S3
+      - name: Validate against golden test set
+        id: golden_gate
         if: steps.diversity.outputs.diversity_ok == 'true'
         run: |
           echo "=============================================="
-          echo "UPLOADING MODELS TO S3"
+          echo "GOLDEN TEST SET VALIDATION"
           echo "=============================================="
 
-          # Add timestamp to production metadata
+          python3 << 'PYEOF'
+          import pandas as pd
+          import numpy as np
+          import joblib
+          import json
+          import sys
+          sys.path.insert(0, '.')
+
+          from src.features.url_features import extract_single_url_features
+
+          # Load golden test set
+          golden = pd.read_csv('data/test/golden_test_set.csv')
+          print(f"Golden test set: {len(golden)} URLs ({(golden['label']=='legitimate').sum()} safe, {(golden['label']=='phishing').sum()} phishing)")
+
+          # Extract URL features for golden set (URL features are fast, no network calls for DNS/WHOIS)
+          print("\nExtracting URL features for golden test set...")
+          features_list = []
+          for idx, row in golden.iterrows():
+              try:
+                  feats = extract_single_url_features(row['url'])
+                  feats['url'] = row['url']
+                  feats['label'] = row['label']
+                  features_list.append(feats)
+              except Exception as e:
+                  print(f"  Failed for {row['url'][:50]}: {e}")
+                  features_list.append({'url': row['url'], 'label': row['label']})
+
+          df_golden = pd.DataFrame(features_list)
+          golden_labels = df_golden['label'].apply(lambda x: 1 if x == 'phishing' else 0).values
+
+          # Test URL model (primary model for the web app)
+          results = {}
+          try:
+              # Find best URL model from CV results
+              cv_results = pd.read_csv('analysis/url_cv_results.csv')
+              best_model_name = cv_results.iloc[0]['model']
+
+              model = joblib.load(f'models/url_{best_model_name}.pkl')
+              feature_cols = joblib.load(f'models/url_{best_model_name}_feature_cols.pkl')
+
+              # Prepare features
+              for col in feature_cols:
+                  if col not in df_golden.columns:
+                      df_golden[col] = 0
+
+              X_golden = df_golden[feature_cols].fillna(0)
+
+              # Convert object columns to numeric (same as training)
+              for col in X_golden.columns:
+                  if X_golden[col].dtype == 'object':
+                      X_golden[col], _ = pd.factorize(X_golden[col])
+
+              preds = model.predict(X_golden)
+              probs = model.predict_proba(X_golden)[:, 1] if hasattr(model, 'predict_proba') else preds
+
+              # Accuracy metrics
+              from sklearn.metrics import accuracy_score, roc_auc_score
+
+              overall_acc = accuracy_score(golden_labels, preds)
+
+              # Safe URL accuracy (must NOT be flagged as phishing)
+              safe_mask = golden_labels == 0
+              safe_preds = preds[safe_mask]
+              safe_acc = (safe_preds == 0).mean()  # % of safe URLs correctly identified as safe
+              fp_rate = (safe_preds == 1).mean()  # False positive rate on safe URLs
+
+              # Phishing URL accuracy
+              phish_mask = golden_labels == 1
+              phish_preds = preds[phish_mask]
+              phish_acc = (phish_preds == 1).mean()  # % of phishing URLs correctly caught
+
+              try:
+                  auc = roc_auc_score(golden_labels, probs)
+              except:
+                  auc = 0.0
+
+              results = {
+                  'model': f'url_{best_model_name}',
+                  'overall_accuracy': round(overall_acc, 4),
+                  'safe_url_accuracy': round(safe_acc, 4),
+                  'false_positive_rate': round(fp_rate, 4),
+                  'phishing_detection_rate': round(phish_acc, 4),
+                  'auc': round(auc, 4)
+              }
+
+              print(f"\n📊 Golden Test Results (url_{best_model_name}):")
+              print(f"  Overall accuracy:       {overall_acc*100:.1f}%")
+              print(f"  Safe URL accuracy:      {safe_acc*100:.1f}% (must be ≥95%)")
+              print(f"  False positive rate:    {fp_rate*100:.1f}% (must be <5%)")
+              print(f"  Phishing detection:     {phish_acc*100:.1f}%")
+              print(f"  AUC:                    {auc:.4f}")
+
+          except Exception as e:
+              print(f"❌ Golden test failed: {e}")
+              import traceback
+              traceback.print_exc()
+              results = {'error': str(e), 'safe_url_accuracy': 0, 'false_positive_rate': 1.0}
+
+          # Save results
+          with open('analysis/golden_test_results.json', 'w') as f:
+              json.dump(results, f, indent=2)
+
+          # Gate: block deployment if safe URL accuracy < 95% (FP rate > 5%)
+          safe_acc = results.get('safe_url_accuracy', 0)
+          fp_rate = results.get('false_positive_rate', 1.0)
+
+          if safe_acc < 0.95:
+              print(f"\n🚫 GOLDEN GATE FAILED: Safe URL accuracy {safe_acc*100:.1f}% < 95% threshold")
+              print(f"   {fp_rate*100:.1f}% of safe URLs would be falsely flagged as phishing")
+              with open('GOLDEN_GATE_FAILED', 'w') as f:
+                  f.write(f"safe_acc={safe_acc}")
+          else:
+              print(f"\n✅ GOLDEN GATE PASSED: Safe URL accuracy {safe_acc*100:.1f}% ≥ 95%")
+          PYEOF
+
+          if [ -f "GOLDEN_GATE_FAILED" ]; then
+            echo "::warning::Golden test gate FAILED - safe URLs being flagged as phishing. Deployment blocked."
+            echo "golden_passed=false" >> $GITHUB_OUTPUT
+          else
+            echo "golden_passed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compare AUC with previous model
+        id: auc_gate
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "MODEL AUC REGRESSION CHECK"
+          echo "=============================================="
+
+          python3 << 'PYEOF'
+          import json
+          import pandas as pd
+
+          # Load previous metadata
+          prev_auc = {}
+          try:
+              with open('data/processed/previous_production_metadata.json') as f:
+                  prev = json.load(f)
+              ensemble = prev.get('ensemble', {})
+              cv_perf = ensemble.get('cv_performance', {})
+              prev_auc = {
+                  'url': cv_perf.get('url_roc_auc', 0),
+                  'dns': cv_perf.get('dns_roc_auc', 0),
+                  'whois': cv_perf.get('whois_roc_auc', 0)
+              }
+              print(f"Previous AUCs: URL={prev_auc['url']:.4f}, DNS={prev_auc['dns']:.4f}, WHOIS={prev_auc['whois']:.4f}")
+          except Exception as e:
+              print(f"No previous metadata found ({e}), skipping AUC comparison")
+              prev_auc = {}
+
+          if not prev_auc:
+              print("✅ No previous AUC to compare against, passing gate")
+              exit(0)
+
+          # Load current CV results
+          regressions = []
+          for ft in ['url', 'dns', 'whois']:
+              try:
+                  cv = pd.read_csv(f'analysis/{ft}_cv_results.csv')
+                  current_best = cv.iloc[0]['roc_auc']
+                  prev_best = prev_auc.get(ft, 0)
+                  diff = current_best - prev_best
+
+                  status = "✅" if diff >= -0.02 else "🚫"
+                  print(f"  {ft.upper()}: {prev_best:.4f} → {current_best:.4f} (diff: {diff:+.4f}) {status}")
+
+                  if diff < -0.02:
+                      regressions.append(f"{ft}: {diff:+.4f}")
+              except Exception as e:
+                  print(f"  {ft.upper()}: Could not compare - {e}")
+
+          if regressions:
+              print(f"\n🚫 AUC REGRESSION DETECTED: {', '.join(regressions)}")
+              print("   Model AUC dropped by more than 2% on one or more feature types")
+              with open('AUC_REGRESSION', 'w') as f:
+                  f.write(str(regressions))
+          else:
+              print(f"\n✅ No AUC regression detected (all within 2% tolerance)")
+          PYEOF
+
+          if [ -f "AUC_REGRESSION" ]; then
+            echo "::warning::AUC regression detected - model performance dropped >2%. Deployment blocked."
+            echo "auc_passed=false" >> $GITHUB_OUTPUT
+          else
+            echo "auc_passed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload models to S3
+        if: >-
+          steps.diversity.outputs.diversity_ok == 'true' &&
+          steps.golden_gate.outputs.golden_passed == 'true' &&
+          steps.auc_gate.outputs.auc_passed != 'false'
+        run: |
+          echo "=============================================="
+          echo "UPLOADING MODELS TO S3 (ALL GATES PASSED)"
+          echo "=============================================="
+
+          # Add timestamp and gate results to production metadata
           python3 << 'EOF'
           import json
+          import pandas as pd
           from datetime import datetime
 
           try:
@@ -353,6 +601,21 @@ jobs:
 
           metadata['last_trained'] = datetime.now().isoformat()
           metadata['training_run'] = '${{ github.run_id }}'
+
+          # Add best AUC per feature type for next run's comparison
+          for ft in ['url', 'dns', 'whois']:
+              try:
+                  cv = pd.read_csv(f'analysis/{ft}_cv_results.csv')
+                  metadata.setdefault('ensemble', {}).setdefault('cv_performance', {})[f'{ft}_roc_auc'] = float(cv.iloc[0]['roc_auc'])
+              except:
+                  pass
+
+          # Add golden test results
+          try:
+              with open('analysis/golden_test_results.json') as f:
+                  metadata['golden_test'] = json.load(f)
+          except:
+              pass
 
           with open('models/production_metadata.json', 'w') as f:
               json.dump(metadata, f, indent=2)
@@ -372,7 +635,10 @@ jobs:
           cat models/production_metadata.json
 
       - name: Commit production training record
-        if: steps.diversity.outputs.diversity_ok == 'true'
+        if: >-
+          steps.diversity.outputs.diversity_ok == 'true' &&
+          steps.golden_gate.outputs.golden_passed == 'true' &&
+          steps.auc_gate.outputs.auc_passed != 'false'
         run: |
           # Get total training samples from metadata
           TOTAL_URLS=$(python3 -c "
@@ -403,18 +669,32 @@ jobs:
           git push origin main || echo "Push failed - will retry next run"
 
       - name: Summary
+        if: always()
         run: |
           echo ""
           echo "=============================================="
-          echo "DAILY RETRAINING COMPLETE"
+          echo "DAILY RETRAINING SUMMARY"
           echo "=============================================="
           echo ""
           echo "Timestamp: $(date)"
           echo "Run ID: ${{ github.run_id }}"
           echo ""
+          echo "Gate Results:"
+          echo "  Diversity check:    ${{ steps.diversity.outputs.diversity_ok || 'skipped' }}"
+          echo "  Golden test gate:   ${{ steps.golden_gate.outputs.golden_passed || 'skipped' }}"
+          echo "  AUC regression:     ${{ steps.auc_gate.outputs.auc_passed || 'skipped' }}"
+          echo ""
 
-          if [ "${{ steps.diversity.outputs.diversity_ok }}" == "true" ]; then
-            echo "✅ Models trained and uploaded to S3"
+          if [ "${{ steps.golden_gate.outputs.golden_passed }}" == "false" ]; then
+            echo "🚫 DEPLOYMENT BLOCKED: Golden test gate failed"
+            echo "   Safe URLs are being flagged as phishing - model not deployed"
+            echo "   Previous production model remains active"
+          elif [ "${{ steps.auc_gate.outputs.auc_passed }}" == "false" ]; then
+            echo "🚫 DEPLOYMENT BLOCKED: AUC regression detected"
+            echo "   Model performance dropped >2% - model not deployed"
+            echo "   Previous production model remains active"
+          elif [ "${{ steps.diversity.outputs.diversity_ok }}" == "true" ]; then
+            echo "✅ All gates passed - models trained and uploaded to S3"
             echo "   The production API will hot-reload new models automatically"
           else
             echo "⚠️ Training skipped due to low diversity score"
@@ -422,6 +702,7 @@ jobs:
           fi
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: daily-retrain-${{ github.run_id }}

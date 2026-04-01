@@ -1022,9 +1022,13 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     ]
 
     source_stats = {}
+    collected_at = datetime.now().isoformat()
     for name, fetcher in fetchers:
         try:
             urls = fetcher()
+            # Add collected_at timestamp to every URL
+            for u in urls:
+                u['collected_at'] = collected_at
             all_phishing_urls.extend(urls)
             source_stats[name] = len(urls)
         except Exception as e:
@@ -1086,10 +1090,13 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     # Generate legitimate URLs — Tranco first, hardcoded as supplement
     print()
     tranco_urls = fetch_tranco_legitimate_urls(n_legit, existing_urls)
+    # Add collected_at to legitimate URLs
+    for u in tranco_urls:
+        u['collected_at'] = collected_at
     df_tranco = (
         pd.DataFrame(tranco_urls)
         if tranco_urls
-        else pd.DataFrame(columns=["url", "label", "source"])
+        else pd.DataFrame(columns=["url", "label", "source", "collected_at"])
     )
 
     # Supplement with hardcoded domains if Tranco didn't return enough
@@ -1097,6 +1104,8 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     remaining_needed = n_legit - tranco_count
     if remaining_needed > 0:
         hardcoded_urls = generate_legitimate_urls(remaining_needed, unique_suffix=False)
+        for u in hardcoded_urls:
+            u['collected_at'] = collected_at
         df_hardcoded = pd.DataFrame(hardcoded_urls)
         df_legit = pd.concat([df_tranco, df_hardcoded], ignore_index=True)
     else:
@@ -1170,6 +1179,54 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     print()
     print(f"Saved to: {output_file}")
     print("=" * 80)
+
+    # Data quality log — write structured JSON for monitoring
+    quality_log = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "timestamp": datetime.now().isoformat(),
+        "sources": source_stats,
+        "total_phishing": int(len(df_phish_sample)),
+        "total_legitimate": int(len(df_legit_sample)),
+        "total": int(len(df_final)),
+        "phishing_ratio": round(len(df_phish_sample) / max(len(df_final), 1), 3),
+        "feeds_returning_zero": [name for name, count in source_stats.items() if count == 0]
+    }
+
+    # Append to collection log
+    log_file = "data/collection_log.json"
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    existing_log = []
+    if os.path.exists(log_file):
+        try:
+            with open(log_file) as f:
+                existing_log = json.load(f)
+        except Exception:
+            existing_log = []
+    existing_log.append(quality_log)
+    # Keep last 30 days
+    existing_log = existing_log[-30:]
+    with open(log_file, "w") as f:
+        json.dump(existing_log, f, indent=2)
+
+    # Data quality warnings
+    phishing_ratio = quality_log["phishing_ratio"]
+    if phishing_ratio > 0.70:
+        print(f"\n⚠️  DATA QUALITY WARNING: Batch is {phishing_ratio*100:.0f}% phishing (>70% threshold)")
+    elif phishing_ratio < 0.30:
+        print(f"\n⚠️  DATA QUALITY WARNING: Batch is only {phishing_ratio*100:.0f}% phishing (<30% threshold)")
+
+    # Check for feeds that have been dead for 3+ days
+    if len(existing_log) >= 3:
+        dead_feeds = []
+        for feed_name in source_stats:
+            recent_counts = [
+                entry["sources"].get(feed_name, 0)
+                for entry in existing_log[-3:]
+            ]
+            if all(c == 0 for c in recent_counts):
+                dead_feeds.append(feed_name)
+        if dead_feeds:
+            print(f"\n⚠️  FEED STALENESS WARNING: {', '.join(dead_feeds)} returned 0 URLs for 3+ consecutive days")
 
     return len(df_final)
 
