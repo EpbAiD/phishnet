@@ -186,6 +186,21 @@ jobs:
                       df[col] = df[col].fillna('MISSING')
                       df[col], _ = pd.factorize(df[col])
 
+              # Balance classes by downsampling majority class
+              df_phishing = df[df['label_encoded'] == 1]
+              df_legit = df[df['label_encoded'] == 0]
+              print(f"  Before balancing: {len(df_phishing)} phishing, {len(df_legit)} legitimate")
+
+              minority_size = min(len(df_phishing), len(df_legit))
+              if minority_size == 0:
+                  print(f"  ⚠️ Only one class present, skipping")
+                  continue
+
+              df_phishing_bal = df_phishing.sample(n=minority_size, random_state=42)
+              df_legit_bal = df_legit.sample(n=minority_size, random_state=42)
+              df = pd.concat([df_phishing_bal, df_legit_bal]).sample(frac=1, random_state=42).reset_index(drop=True)
+              print(f"  After balancing: {minority_size} per class ({minority_size * 2} total)")
+
               # Save
               df_train = df[feature_cols + ['label_encoded']].copy().fillna(0)
               df_train.to_csv(f'data/processed/{feature_type}_features_modelready_imputed.csv', index=False)
