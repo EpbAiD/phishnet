@@ -81,50 +81,6 @@ jobs:
             fi
           done
 
-      - name: Purge stale data (90-day rolling window)
-        run: |
-          echo "=============================================="
-          echo "PURGING DATA OLDER THAN 90 DAYS"
-          echo "=============================================="
-
-          python3 << 'EOF'
-          import pandas as pd
-          from datetime import datetime, timedelta
-
-          cutoff = datetime.now() - timedelta(days=90)
-          print(f"Cutoff date: {cutoff.strftime('%Y-%m-%d')}")
-
-          for feature_type in ['url', 'dns', 'whois']:
-              filepath = f'data/processed/{feature_type}_features_master.csv'
-              try:
-                  df = pd.read_csv(filepath)
-                  before = len(df)
-
-                  if 'collected_at' in df.columns:
-                      df['collected_at'] = pd.to_datetime(df['collected_at'], errors='coerce')
-                      # Keep rows without dates (legacy) or within 90 days
-                      df = df[df['collected_at'].isna() | (df['collected_at'] >= cutoff)]
-                      purged = before - len(df)
-                      if purged > 0:
-                          df.to_csv(filepath, index=False)
-                          print(f"  {feature_type.upper()}: purged {purged} stale rows, {len(df)} remaining")
-                      else:
-                          print(f"  {feature_type.upper()}: no stale rows (all within 90 days or no timestamps)")
-                  else:
-                      print(f"  {feature_type.upper()}: no collected_at column yet (legacy data, keeping all {before} rows)")
-              except Exception as e:
-                  print(f"  {feature_type.upper()}: Error - {e}")
-          EOF
-
-          # Re-upload purged masters to S3
-          for ft in url dns whois; do
-            f="data/processed/${ft}_features_master.csv"
-            if [ -f "$f" ]; then
-              aws s3 cp "$f" "s3://${{ env.S3_BUCKET }}/master/${ft}_features_master.csv"
-            fi
-          done
-          echo "✅ Purged masters re-uploaded to S3"
-
       - name: Check data diversity
         id: diversity
         run: |

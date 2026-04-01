@@ -273,18 +273,6 @@ def extract_and_accumulate(batch_date: str):
             df_combined = pd.concat([config['existing'], config['new']], ignore_index=True)
             df_combined = df_combined.drop_duplicates(subset=['url'], keep='last')
 
-            # Purge data older than 90 days
-            if 'collected_at' in df_combined.columns:
-                cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
-                df_combined['collected_at'] = pd.to_datetime(df_combined['collected_at'], errors='coerce')
-                before_purge = len(df_combined)
-                df_combined = df_combined[
-                    df_combined['collected_at'].isna() | (df_combined['collected_at'] >= cutoff)
-                ]
-                purged = before_purge - len(df_combined)
-                if purged > 0:
-                    print(f"  🗑️ Purged {purged} rows older than 90 days", flush=True)
-
             added = len(df_combined) - len(config['existing'])
             duplicates = len(config['new']) - added
 
