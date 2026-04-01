@@ -31,7 +31,8 @@ function App() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
   useEffect(() => {
-    checkHealth()
+    setApiStatus('checking');
+    checkHealth(3)
       .then(() => setApiStatus('online'))
       .catch(() => setApiStatus('offline'));
   }, []);
@@ -43,7 +44,7 @@ function App() {
           <h1>{APP_NAME}</h1>
           <p>{APP_DESCRIPTION}</p>
           <div className={`api-status ${apiStatus}`}>
-            API: {apiStatus === 'checking' ? 'Checking...' : apiStatus === 'online' ? 'Online' : 'Offline'}
+            API: {apiStatus === 'checking' ? 'Waking up (can take ~30s)...' : apiStatus === 'online' ? 'Online' : 'Offline'}
           </div>
           <Navigation />
         </header>

@@ -1,11 +1,22 @@
 import { API_BASE } from './config';
 import { PredictionResponse, ExplainResponse, HealthResponse, FeedbackPayload } from './types';
 
-// Check API health
-export async function checkHealth(): Promise<HealthResponse> {
-  const response = await fetch(`${API_BASE}/health`);
-  if (!response.ok) throw new Error('API not available');
-  return response.json();
+// Check API health with retry for Render free tier cold starts (~30s)
+export async function checkHealth(retries = 3): Promise<HealthResponse> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45000);
+      const response = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) throw new Error('API not available');
+      return response.json();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+  throw new Error('API not available');
 }
 
 // Predict URL (simple)
