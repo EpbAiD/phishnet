@@ -67,9 +67,12 @@ jobs:
           aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv \
             data/processed/whois_features_master.csv 2>/dev/null || echo "No WHOIS master found"
 
-          # Download previous production metadata for AUC comparison
+          # Download the DEPLOYED model metadata for AUC comparison
+          # This only gets updated when a model passes all gates and is actually deployed
+          aws s3 cp s3://${{ env.S3_BUCKET }}/models/deployed_metadata.json \
+            data/processed/deployed_metadata.json 2>/dev/null || \
           aws s3 cp s3://${{ env.S3_BUCKET }}/models/production_metadata.json \
-            data/processed/previous_production_metadata.json 2>/dev/null || echo "No previous metadata"
+            data/processed/deployed_metadata.json 2>/dev/null || echo "No previous metadata"
 
           # Show dataset sizes
           echo ""
@@ -479,10 +482,10 @@ jobs:
           import json
           import pandas as pd
 
-          # Load previous metadata
+          # Load DEPLOYED model metadata (not last trained — the one actually serving)
           prev_auc = {}
           try:
-              with open('data/processed/previous_production_metadata.json') as f:
+              with open('data/processed/deployed_metadata.json') as f:
                   prev = json.load(f)
               ensemble = prev.get('ensemble', {})
               cv_perf = ensemble.get('cv_performance', {})
@@ -491,9 +494,11 @@ jobs:
                   'dns': cv_perf.get('dns_roc_auc', 0),
                   'whois': cv_perf.get('whois_roc_auc', 0)
               }
-              print(f"Previous AUCs: URL={prev_auc['url']:.4f}, DNS={prev_auc['dns']:.4f}, WHOIS={prev_auc['whois']:.4f}")
+              deployed_date = prev.get('last_trained', 'unknown')
+              print(f"Currently deployed model from: {deployed_date}")
+              print(f"Deployed AUCs: URL={prev_auc['url']:.4f}, DNS={prev_auc['dns']:.4f}, WHOIS={prev_auc['whois']:.4f}")
           except Exception as e:
-              print(f"No previous metadata found ({e}), skipping AUC comparison")
+              print(f"No deployed metadata found ({e}), skipping AUC comparison")
               prev_auc = {}
 
           if not prev_auc:
@@ -582,12 +587,16 @@ jobs:
             --include "*.pkl" \
             --include "*.json"
 
+          # Save as deployed_metadata.json — this is the benchmark for future comparisons
+          # Only updated here (after ALL gates pass), so failed days don't shift the baseline
+          aws s3 cp models/production_metadata.json s3://${{ env.S3_BUCKET }}/models/deployed_metadata.json
+
           echo ""
           echo "Uploaded models:"
           aws s3 ls s3://${{ env.S3_BUCKET }}/models/ | head -20
 
           echo ""
-          echo "Production metadata:"
+          echo "Production metadata (now deployed):"
           cat models/production_metadata.json
 
       - name: Commit production training record
