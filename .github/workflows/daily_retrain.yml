@@ -193,20 +193,32 @@ jobs:
                       df[col] = df[col].fillna('MISSING')
                       df[col], _ = pd.factorize(df[col])
 
-              # Balance classes by downsampling majority class
+              # Balance classes — use ALL data, downsample majority only to match minority
+              # As minority class grows, training size grows automatically
+              # When classes are equal, we train on the full dataset
               df_phishing = df[df['label_encoded'] == 1]
               df_legit = df[df['label_encoded'] == 0]
-              print(f"  Before balancing: {len(df_phishing)} phishing, {len(df_legit)} legitimate")
+              n_phish = len(df_phishing)
+              n_legit = len(df_legit)
+              print(f"  Class distribution: {n_phish} phishing, {n_legit} legitimate")
 
-              minority_size = min(len(df_phishing), len(df_legit))
-              if minority_size == 0:
+              if n_phish == 0 or n_legit == 0:
                   print(f"  ⚠️ Only one class present, skipping")
                   continue
 
-              df_phishing_bal = df_phishing.sample(n=minority_size, random_state=42)
-              df_legit_bal = df_legit.sample(n=minority_size, random_state=42)
-              df = pd.concat([df_phishing_bal, df_legit_bal]).sample(frac=1, random_state=42).reset_index(drop=True)
-              print(f"  After balancing: {minority_size} per class ({minority_size * 2} total)")
+              if n_phish == n_legit:
+                  # Already balanced — train on everything
+                  print(f"  ✅ Already balanced, training on all {n_phish + n_legit} rows")
+              else:
+                  # Downsample majority to match minority — no data wasted from minority
+                  minority_size = min(n_phish, n_legit)
+                  if n_phish > n_legit:
+                      df_phishing = df_phishing.sample(n=minority_size, random_state=42)
+                  else:
+                      df_legit = df_legit.sample(n=minority_size, random_state=42)
+                  df = pd.concat([df_phishing, df_legit]).sample(frac=1, random_state=42).reset_index(drop=True)
+                  print(f"  After balancing: {minority_size} per class ({minority_size * 2} total)")
+                  print(f"  → Training size will grow as minority class catches up")
 
               # Save
               df_train = df[feature_cols + ['label_encoded']].copy().fillna(0)
