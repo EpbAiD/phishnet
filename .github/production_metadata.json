@@ -3,42 +3,42 @@
   "dns_model": "catboost",
   "whois_model": "catboost",
   "ensemble": {
-    "selected_at": "2026-04-24T16:21:38.757400",
+    "selected_at": "2026-04-25T15:57:16.095640",
     "models": {
-      "url": "xgboost",
-      "dns": "lightgbm",
+      "url": "catboost",
+      "dns": "catboost",
       "whois": "voting_base"
     },
-    "weight_strategy": "meta_logistic",
+    "weight_strategy": "heuristic_inverse_error",
     "weights": {
-      "url": 0.7920185028458309,
-      "dns": 0.1970716206328615,
-      "whois": 0.010909876521307626
+      "url": 0.6125531469623188,
+      "dns": 0.1571737963562438,
+      "whois": 0.2302730566814375
     },
     "cv_performance": {
-      "url_roc_auc": 0.9733746558643824,
-      "dns_roc_auc": 0.8990375775426627,
-      "whois_roc_auc": 0.9300288462432468,
-      "ensemble_roc_auc": 0.9580021903520964,
+      "url_roc_auc": 0.973813061410063,
+      "dns_roc_auc": 0.8963662083747963,
+      "whois_roc_auc": 0.9291212484914688,
+      "ensemble_roc_auc": 0.9510396656313883,
       "ensemble_accuracy": 0.0,
       "ensemble_f1": 0.0
     },
     "latency": {
-      "url_ms": 3.904074069987473,
-      "dns_ms": 0.6878638999842224,
-      "whois_ms": 1.8616176600335166,
-      "total_mean_ms": 6.453555630005212,
-      "total_p95_ms": 6.6606120506548905
+      "url_ms": 0.5889291300263721,
+      "dns_ms": 0.5166991499845608,
+      "whois_ms": 1.9098647799910395,
+      "total_mean_ms": 3.0154930600019725,
+      "total_p95_ms": 3.1220545994983695
     },
-    "tradeoff_score": 0.9560661236630948
+    "tradeoff_score": 0.9501350177133877
   },
-  "last_trained": "2026-04-24T16:21:41.132143",
-  "training_run": "24896534086",
+  "last_trained": "2026-04-25T15:57:18.033307",
+  "training_run": "24933280410",
   "golden_test": {
-    "model": "url_xgboost",
-    "overall_accuracy": 0.9934,
-    "safe_url_accuracy": 0.9901,
-    "false_positive_rate": 0.0099,
+    "model": "url_catboost",
+    "overall_accuracy": 0.9868,
+    "safe_url_accuracy": 0.9802,
+    "false_positive_rate": 0.0198,
     "phishing_detection_rate": 1.0,
     "auc": 1.0
   }
