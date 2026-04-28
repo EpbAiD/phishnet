@@ -176,6 +176,15 @@ jobs:
           echo "batch_name=$BATCH_NAME" >> $GITHUB_ENV
           echo "batch_file=$BATCH_FILE" >> $GITHUB_ENV
 
+      - name: Download master dataset for balance check
+        run: |
+          mkdir -p data/processed
+          # Download URL master to compute current class balance
+          # fetch_urls.py reads this to decide adaptive batch ratio
+          aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv \
+            data/processed/phishing_features_complete.csv 2>/dev/null \
+            || echo "No master yet — defaulting to 50/50"
+
       - name: Collect URLs
         run: |
           NUM_URLS="${{ github.event.inputs.num_urls || needs.load-config.outputs.num_urls }}"

@@ -193,9 +193,11 @@ jobs:
                       df[col] = df[col].fillna('MISSING')
                       df[col], _ = pd.factorize(df[col])
 
-              # Balance classes — use ALL data, downsample majority only to match minority
-              # As minority class grows, training size grows automatically
-              # When classes are equal, we train on the full dataset
+              # Use ALL data — never discard patterns
+              # Class imbalance is handled by:
+              #   1. Adaptive batch ratio in fetch_urls.py (over-collects minority class)
+              #   2. class_weight='balanced' in models (penalizes majority class errors more)
+              # As collection catches up to 50/50, the imbalance naturally shrinks
               df_phishing = df[df['label_encoded'] == 1]
               df_legit = df[df['label_encoded'] == 0]
               n_phish = len(df_phishing)
@@ -206,19 +208,11 @@ jobs:
                   print(f"  ⚠️ Only one class present, skipping")
                   continue
 
-              if n_phish == n_legit:
-                  # Already balanced — train on everything
-                  print(f"  ✅ Already balanced, training on all {n_phish + n_legit} rows")
-              else:
-                  # Downsample majority to match minority — no data wasted from minority
-                  minority_size = min(n_phish, n_legit)
-                  if n_phish > n_legit:
-                      df_phishing = df_phishing.sample(n=minority_size, random_state=42)
-                  else:
-                      df_legit = df_legit.sample(n=minority_size, random_state=42)
-                  df = pd.concat([df_phishing, df_legit]).sample(frac=1, random_state=42).reset_index(drop=True)
-                  print(f"  After balancing: {minority_size} per class ({minority_size * 2} total)")
-                  print(f"  → Training size will grow as minority class catches up")
+              # Train on FULL dataset (no downsampling)
+              print(f"  ✅ Training on full dataset: {n_phish + n_legit} rows ({n_legit/(n_phish+n_legit)*100:.1f}% legit)")
+              print(f"  Class imbalance handled via class_weight='balanced' in models")
+              # No sampling — keep df as is, shuffle for randomness
+              df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
               # Save
               df_train = df[feature_cols + ['label_encoded']].copy().fillna(0)
@@ -262,22 +256,25 @@ jobs:
           import warnings
           warnings.filterwarnings('ignore')
 
+          # All classifiers use class_weight='balanced' (or equivalent) so we can
+          # train on the full imbalanced dataset without losing minority patterns.
+          # XGBoost uses scale_pos_weight, CatBoost uses auto_class_weights.
           models = {
-              'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+              'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
               'gradient_boost': GradientBoostingClassifier(n_estimators=100, random_state=42),
               'adaboost': AdaBoostClassifier(n_estimators=100, random_state=42, algorithm='SAMME'),
-              'logistic': LogisticRegression(max_iter=1000, random_state=42),
-              'decision_tree': DecisionTreeClassifier(random_state=42),
+              'logistic': LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced'),
+              'decision_tree': DecisionTreeClassifier(random_state=42, class_weight='balanced'),
               'knn': KNeighborsClassifier(n_neighbors=5),
               'naive_bayes': GaussianNB(),
-              'svm': SVC(probability=True, random_state=42),
+              'svm': SVC(probability=True, random_state=42, class_weight='balanced'),
               'mlp': MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42),
-              'catboost': CatBoostClassifier(iterations=100, random_state=42, verbose=0),
-              'lightgbm': LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
-              'xgboost': XGBClassifier(n_estimators=100, random_state=42, verbosity=0),
-              'extra_trees': ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+              'catboost': CatBoostClassifier(iterations=100, random_state=42, verbose=0, auto_class_weights='Balanced'),
+              'lightgbm': LGBMClassifier(n_estimators=100, random_state=42, verbose=-1, class_weight='balanced'),
+              'xgboost': XGBClassifier(n_estimators=100, random_state=42, verbosity=0),  # scale_pos_weight set per-fold below
+              'extra_trees': ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
               'bagging': BaggingClassifier(n_estimators=50, random_state=42),
-              'voting_base': RandomForestClassifier(n_estimators=50, random_state=42),
+              'voting_base': RandomForestClassifier(n_estimators=50, random_state=42, class_weight='balanced'),
           }
 
           skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -305,12 +302,20 @@ jobs:
 
               results = []
 
+              # XGBoost scale_pos_weight: ratio of negative to positive class
+              # (negatives = legitimate, positives = phishing in our labeling)
+              xgb_spw = (y == 0).sum() / max((y == 1).sum(), 1)
+
               for name, model_template in models.items():
                   fold_rocs = []
 
                   try:
                       for train_idx, val_idx in skf.split(X, y):
                           model = copy.deepcopy(model_template)
+                          # XGBoost: set scale_pos_weight from training fold
+                          if name == 'xgboost':
+                              fold_spw = (y[train_idx] == 0).sum() / max((y[train_idx] == 1).sum(), 1)
+                              model.set_params(scale_pos_weight=fold_spw)
                           model.fit(X.iloc[train_idx], y[train_idx])
 
                           if hasattr(model, 'predict_proba'):
@@ -326,6 +331,8 @@ jobs:
 
                       # Train final model on all data
                       final_model = copy.deepcopy(model_template)
+                      if name == 'xgboost':
+                          final_model.set_params(scale_pos_weight=xgb_spw)
                       final_model.fit(X, y)
                       joblib.dump(final_model, f'models/{feature_type}_{name}.pkl')
                       joblib.dump(list(X.columns), f'models/{feature_type}_{name}_feature_cols.pkl')

@@ -1070,19 +1070,35 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     else:
         master_legit_ratio = 0.5  # No master yet, default 50/50
 
-    if master_legit_ratio < 0.45:
-        # Master needs more legitimate URLs — increase legit share
-        # Cap: at least 20% of batch is phishing (still need fresh threat data)
+    # Tiered adaptive ratio: more aggressive when more imbalanced
+    # Goal: catch up to 50/50 without ever going below 5% phishing (still need threat data)
+    if master_legit_ratio < 0.30:
+        # Severely imbalanced: 95% legit, 5% phishing
+        n_phish = max(int(target_count * 0.05), 1)
+        n_legit = target_count - n_phish
+        tier = "AGGRESSIVE catch-up"
+    elif master_legit_ratio < 0.40:
+        # Heavily imbalanced: 90% legit, 10% phishing
+        n_phish = max(int(target_count * 0.10), 1)
+        n_legit = target_count - n_phish
+        tier = "HEAVY catch-up"
+    elif master_legit_ratio < 0.45:
+        # Mildly imbalanced: 80% legit, 20% phishing
         n_phish = max(int(target_count * 0.20), 1)
         n_legit = target_count - n_phish
-        adaptive_msg = f"Adaptive split: {n_phish} phishing + {n_legit} legitimate (master at {master_legit_ratio*100:.1f}% legit)"
+        tier = "MILD catch-up"
+    elif master_legit_ratio < 0.50:
+        # Almost balanced: 60% legit, 40% phishing
+        n_phish = max(int(target_count * 0.40), 1)
+        n_legit = target_count - n_phish
+        tier = "FINE-TUNE"
     else:
-        # Master is balanced enough — standard 50/50
+        # Balanced or legit-heavy — standard 50/50
         n_phish = target_count // 2
         n_legit = target_count - n_phish
-        adaptive_msg = (
-            f"Standard 50/50 split (master at {master_legit_ratio*100:.1f}% legit)"
-        )
+        tier = "BALANCED 50/50"
+
+    adaptive_msg = f"{tier}: {n_phish} phishing + {n_legit} legitimate (master at {master_legit_ratio*100:.1f}% legit)"
 
     print()
     print(f"BATCH RATIO: {adaptive_msg}")
