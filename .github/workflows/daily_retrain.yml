@@ -22,7 +22,7 @@ jobs:
   daily-retrain:
     name: "Daily Model Retraining"
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 360
 
     permissions:
       contents: write
@@ -240,13 +240,8 @@ jobs:
           import numpy as np
           from sklearn.model_selection import StratifiedKFold
           from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
-          from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, ExtraTreesClassifier, BaggingClassifier
+          from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
           from sklearn.linear_model import LogisticRegression
-          from sklearn.tree import DecisionTreeClassifier
-          from sklearn.neighbors import KNeighborsClassifier
-          from sklearn.naive_bayes import GaussianNB
-          from sklearn.svm import SVC
-          from sklearn.neural_network import MLPClassifier
           from catboost import CatBoostClassifier
           from lightgbm import LGBMClassifier
           from xgboost import XGBClassifier
@@ -256,25 +251,19 @@ jobs:
           import warnings
           warnings.filterwarnings('ignore')
 
-          # All classifiers use class_weight='balanced' (or equivalent) so we can
-          # train on the full imbalanced dataset without losing minority patterns.
-          # XGBoost uses scale_pos_weight, CatBoost uses auto_class_weights.
+          # Curated model zoo: 6 models that actually help on tabular data
+          # with ~100k rows and 12-39 features.
+          # Dropped: SVM, MLP (slow, weak on tabular), AdaBoost, KNN (slow),
+          # NaiveBayes, DecisionTree (underperform), GradientBoosting (slow XGB),
+          # Bagging, voting_base (RF duplicates).
+          # Class imbalance handled via class_weight / scale_pos_weight.
           models = {
-              'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
-              'gradient_boost': GradientBoostingClassifier(n_estimators=100, random_state=42),
-              'adaboost': AdaBoostClassifier(n_estimators=100, random_state=42, algorithm='SAMME'),
-              'logistic': LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced'),
-              'decision_tree': DecisionTreeClassifier(random_state=42, class_weight='balanced'),
-              'knn': KNeighborsClassifier(n_neighbors=5),
-              'naive_bayes': GaussianNB(),
-              'svm': SVC(probability=True, random_state=42, class_weight='balanced'),
-              'mlp': MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42),
               'catboost': CatBoostClassifier(iterations=100, random_state=42, verbose=0, auto_class_weights='Balanced'),
               'lightgbm': LGBMClassifier(n_estimators=100, random_state=42, verbose=-1, class_weight='balanced'),
               'xgboost': XGBClassifier(n_estimators=100, random_state=42, verbosity=0),  # scale_pos_weight set per-fold below
+              'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
               'extra_trees': ExtraTreesClassifier(n_estimators=100, random_state=42, n_jobs=-1, class_weight='balanced'),
-              'bagging': BaggingClassifier(n_estimators=50, random_state=42),
-              'voting_base': RandomForestClassifier(n_estimators=50, random_state=42, class_weight='balanced'),
+              'logistic': LogisticRegression(max_iter=1000, random_state=42, class_weight='balanced'),
           }
 
           skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
