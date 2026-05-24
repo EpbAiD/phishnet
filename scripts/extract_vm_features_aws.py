@@ -17,6 +17,7 @@ import threading
 import multiprocessing
 import pandas as pd
 import boto3
+from botocore.exceptions import ClientError
 from pathlib import Path
 
 # Add project root to path
@@ -252,13 +253,45 @@ def extract_and_accumulate(batch_date: str):
     }
 
     for feature_type, config in masters.items():
+        # Only treat a genuine "object does not exist" (404 NoSuchKey) as a fresh
+        # start. ANY other error (timeout, network blip, throttling) must ABORT —
+        # otherwise a transient read failure silently overwrites the whole master.
+        # This is exactly what wiped the 609k-row WHOIS master on 2026-05-22.
         try:
-            s3.download_file(S3_BUCKET, config['s3_key'], config['file'])
-            config['existing'] = pd.read_csv(config['file'])
-            print(f"📊 Existing {feature_type.upper()} master: {len(config['existing'])} rows", flush=True)
-        except Exception as e:
-            print(f"ℹ️  No existing {feature_type.upper()} master - creating new", flush=True)
-            config['existing'] = None
+            s3.head_object(Bucket=S3_BUCKET, Key=config['s3_key'])
+            exists = True
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code in ('404', 'NoSuchKey', 'NotFound'):
+                print(f"ℹ️  No existing {feature_type.upper()} master - creating new", flush=True)
+                config['existing'] = None
+                exists = False
+            else:
+                raise RuntimeError(
+                    f"FATAL: could not stat {feature_type.upper()} master "
+                    f"(code={code}). Aborting to avoid overwriting accumulated data."
+                ) from e
+
+        if exists:
+            # Retry the download a few times — never give up and create-new on
+            # a transient error for a file we KNOW exists.
+            last_err = None
+            for attempt in range(3):
+                try:
+                    s3.download_file(S3_BUCKET, config['s3_key'], config['file'])
+                    config['existing'] = pd.read_csv(config['file'])
+                    print(f"📊 Existing {feature_type.upper()} master: {len(config['existing'])} rows", flush=True)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    print(f"  ⚠️ Download attempt {attempt + 1} failed for {feature_type.upper()}: {e}", flush=True)
+                    time.sleep(5 * (attempt + 1))
+            if last_err is not None:
+                raise RuntimeError(
+                    f"FATAL: {feature_type.upper()} master exists in S3 but could not "
+                    f"be downloaded after 3 attempts. Aborting to avoid data loss."
+                ) from last_err
 
     # Step 6: Accumulate each master separately
     print(f"\n{'=' * 60}", flush=True)
@@ -290,8 +323,22 @@ def extract_and_accumulate(batch_date: str):
     print("=" * 60, flush=True)
 
     for feature_type, config in masters.items():
+        # Shrink guard: never replace a master with one that's drastically smaller.
+        # Accumulation should only ever grow (or stay same after dedup). A large
+        # drop means something went wrong upstream — refuse to upload.
+        existing_n = len(config['existing']) if config['existing'] is not None else 0
+        new_n = len(config['combined'])
+        if existing_n > 100 and new_n < existing_n * 0.5:
+            print(
+                f"🚫 ABORT upload for {feature_type.upper()}: new master ({new_n} rows) "
+                f"is <50% of existing ({existing_n} rows). Refusing to shrink master.",
+                flush=True,
+            )
+            raise RuntimeError(
+                f"{feature_type.upper()} master would shrink from {existing_n} to {new_n} rows — aborting."
+            )
         s3.upload_file(config['file'], S3_BUCKET, config['s3_key'])
-        print(f"✅ Uploaded {feature_type.upper()} master: {len(config['combined'])} rows", flush=True)
+        print(f"✅ Uploaded {feature_type.upper()} master: {new_n} rows", flush=True)
 
     # Also upload combined for backwards compatibility
     merged = df_url_features.merge(df_dns.drop(columns=['label'], errors='ignore'), on='url', how='left')

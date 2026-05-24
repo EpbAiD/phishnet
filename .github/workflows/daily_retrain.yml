@@ -280,6 +280,12 @@ jobs:
                   print(f"  Skipping {feature_type} - no data")
                   continue
 
+              # Guard against stale/committed files that lack label_encoded
+              # (prep step skips writing this file when a feature type has only one class)
+              if 'label_encoded' not in df.columns:
+                  print(f"  ⚠️ Skipping {feature_type} - no label_encoded column (prep skipped it, likely single-class or broken master)")
+                  continue
+
               X = df.drop('label_encoded', axis=1)
               y = df['label_encoded'].values
 
