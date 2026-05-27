@@ -168,7 +168,12 @@ jobs:
       - name: Set batch info
         id: batch
         run: |
-          BATCH_DATE=$(date +%Y%m%d)
+          # Include time so the morning and evening runs get DISTINCT batch ids.
+          # Previously both used date-only, so they collided on the same S3 batch
+          # file and the same EC2 checkpoint — the evening run resumed from the
+          # morning's "completed" checkpoint and re-uploaded stale DNS/WHOIS data,
+          # freezing those masters (+0 new every run).
+          BATCH_DATE=$(date +%Y%m%d_%H%M%S)
           BATCH_NAME="batch_${BATCH_DATE}.csv"
           BATCH_FILE="data/url_queue/${BATCH_NAME}"
 

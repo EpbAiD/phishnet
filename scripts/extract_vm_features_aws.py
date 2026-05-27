@@ -154,19 +154,52 @@ def extract_and_accumulate(batch_date: str):
     dns_features = []
     whois_features = []
 
+    # A checkpoint is only valid if its cached URLs match THIS batch's URLs.
+    # Otherwise (stale checkpoint from a same-named earlier batch) we'd resume
+    # as "done" and re-upload old data without extracting the new URLs.
+    def _checkpoint_matches_batch(ckpt_csv, batch_urls):
+        if not os.path.exists(ckpt_csv):
+            return False
+        try:
+            cached = pd.read_csv(ckpt_csv)
+            if 'url' not in cached.columns:
+                return False
+            # Cached URLs must be a prefix of the current batch (resume scenario)
+            cached_urls = list(cached['url'])
+            return cached_urls == batch_urls[:len(cached_urls)]
+        except Exception:
+            return False
+
+    batch_urls = list(df_batch['url'])
+
     if os.path.exists(checkpoint_file):
         with open(checkpoint_file) as f:
             cp = json.load(f)
-        dns_start_idx = cp.get("dns_completed", 0)
-        whois_start_idx = cp.get("whois_completed", 0)
-        print(f"📋 Resuming from checkpoint: DNS={dns_start_idx}, WHOIS={whois_start_idx}", flush=True)
+        cand_dns = cp.get("dns_completed", 0)
+        cand_whois = cp.get("whois_completed", 0)
 
-        if os.path.exists(dns_checkpoint) and dns_start_idx > 0:
-            dns_features = pd.read_csv(dns_checkpoint).to_dict('records')
-            print(f"  Loaded {len(dns_features)} cached DNS results", flush=True)
-        if os.path.exists(whois_checkpoint) and whois_start_idx > 0:
-            whois_features = pd.read_csv(whois_checkpoint).to_dict('records')
-            print(f"  Loaded {len(whois_features)} cached WHOIS results", flush=True)
+        dns_valid = cand_dns == 0 or _checkpoint_matches_batch(dns_checkpoint, batch_urls)
+        whois_valid = cand_whois == 0 or _checkpoint_matches_batch(whois_checkpoint, batch_urls)
+
+        if dns_valid and whois_valid:
+            dns_start_idx = cand_dns
+            whois_start_idx = cand_whois
+            print(f"📋 Resuming from checkpoint: DNS={dns_start_idx}, WHOIS={whois_start_idx}", flush=True)
+            if os.path.exists(dns_checkpoint) and dns_start_idx > 0:
+                dns_features = pd.read_csv(dns_checkpoint).to_dict('records')
+                print(f"  Loaded {len(dns_features)} cached DNS results", flush=True)
+            if os.path.exists(whois_checkpoint) and whois_start_idx > 0:
+                whois_features = pd.read_csv(whois_checkpoint).to_dict('records')
+                print(f"  Loaded {len(whois_features)} cached WHOIS results", flush=True)
+        else:
+            print(
+                f"⚠️ Stale checkpoint for {batch_date} does not match current batch URLs — "
+                f"discarding and extracting fresh.",
+                flush=True,
+            )
+            for stale in (checkpoint_file, dns_checkpoint, whois_checkpoint):
+                if os.path.exists(stale):
+                    os.remove(stale)
 
     with Heartbeat() as hb:
         # Step 2: Extract DNS features
