@@ -3,7 +3,7 @@
   "dns_model": "catboost",
   "whois_model": "catboost",
   "ensemble": {
-    "selected_at": "2026-06-05T16:36:24.356862",
+    "selected_at": "2026-06-06T15:19:42.713338",
     "models": {
       "url": "catboost",
       "dns": "lightgbm",
@@ -11,29 +11,29 @@
     },
     "weight_strategy": "scipy_optimized_log_loss",
     "weights": {
-      "url": 0.6808161588879512,
-      "dns": 0.1841689793674032,
-      "whois": 0.1350148617446456
+      "url": 0.6808161582721356,
+      "dns": 0.18416898271141346,
+      "whois": 0.1350148590164509
     },
     "cv_performance": {
       "url_roc_auc": 0.9738628837520548,
       "dns_roc_auc": 0.9210039315889617,
       "whois_roc_auc": 0.9366929475992756,
-      "ensemble_roc_auc": 0.9586098592224478,
+      "ensemble_roc_auc": 0.9586098591395165,
       "ensemble_accuracy": 0.0,
       "ensemble_f1": 0.0
     },
     "latency": {
-      "url_ms": 0.7506901599901994,
-      "dns_ms": 0.7040784800005895,
-      "whois_ms": 1.48793432999355,
-      "total_mean_ms": 2.942702969984339,
-      "total_p95_ms": 3.142929699862407
+      "url_ms": 0.8546929800019143,
+      "dns_ms": 0.5300729399988313,
+      "whois_ms": 1.1990108399965038,
+      "total_mean_ms": 2.5837767599972494,
+      "total_p95_ms": 5.336517649928396
     },
-    "tradeoff_score": 0.9577270483314525
+    "tradeoff_score": 0.9578347261115173
   },
-  "last_trained": "2026-06-05T16:36:26.558405",
-  "training_run": "27026964375",
+  "last_trained": "2026-06-06T15:19:44.505626",
+  "training_run": "27065911543",
   "golden_test": {
     "model": "url_xgboost",
     "overall_accuracy": 0.9868,
