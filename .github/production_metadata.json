@@ -3,7 +3,7 @@
   "dns_model": "catboost",
   "whois_model": "catboost",
   "ensemble": {
-    "selected_at": "2026-06-11T17:43:42.025105",
+    "selected_at": "2026-06-12T16:50:56.143556",
     "models": {
       "url": "catboost",
       "dns": "lightgbm",
@@ -24,16 +24,16 @@
       "ensemble_f1": 0.0
     },
     "latency": {
-      "url_ms": 0.8549417300025652,
-      "dns_ms": 0.7836549200033005,
-      "whois_ms": 1.8249123599980521,
-      "total_mean_ms": 3.463509010003918,
-      "total_p95_ms": 3.595770549873123
+      "url_ms": 1.0354055099912784,
+      "dns_ms": 0.7660995500009449,
+      "whois_ms": 1.7886856699999498,
+      "total_mean_ms": 3.590190729992173,
+      "total_p95_ms": 6.474174999914339
     },
-    "tradeoff_score": 0.9575708065194466
+    "tradeoff_score": 0.9575328020034501
   },
-  "last_trained": "2026-06-11T17:43:44.446875",
-  "training_run": "27365622107",
+  "last_trained": "2026-06-12T16:50:58.328590",
+  "training_run": "27429549912",
   "golden_test": {
     "model": "url_xgboost",
     "overall_accuracy": 0.9868,
