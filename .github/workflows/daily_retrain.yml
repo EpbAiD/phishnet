@@ -4,16 +4,14 @@ name: Daily Model Retraining
 # EC2 daemon collects URLs 24/7, this workflow trains on the growing dataset
 
 on:
-  # SCHEDULE TEMPORARILY DISABLED while we iterate on the EC2 pipeline.
-  # Re-enable by uncommenting once masters are actually being updated again.
-  # schedule:
-  #   - cron: '0 14 * * *'  # Daily at 9 AM EST (14:00 UTC)
+  schedule:
+    - cron: '0 14 * * *'  # Daily at 9 AM EST (14:00 UTC)
   workflow_dispatch:
     inputs:
       force_train:
         description: 'Force training even if diversity check fails'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:

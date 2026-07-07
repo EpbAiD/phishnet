@@ -5,11 +5,12 @@ name: Unified ML Pipeline
 # Uses AWS (EC2, S3, RDS) for infrastructure
 
 on:
-  # SCHEDULE TEMPORARILY DISABLED while we iterate on the EC2 pipeline.
-  # Re-enable by uncommenting the schedule block below once a manual run is green.
-  # schedule:
-  #   - cron: '0 11 * * *'     # 6 AM EST (11:00 UTC)
-  #   - cron: '0 23 * * *'     # 6 PM EST (23:00 UTC)
+  schedule:
+    # Twice daily — collects new URLs and grows the DNS/WHOIS masters.
+    # Aggressive-catch-up ratio keeps favoring legit URLs until the master
+    # reaches 50/50, which is what the realistic-prior gates are waiting on.
+    - cron: '0 11 * * *'     # 6 AM EST (11:00 UTC)
+    - cron: '0 23 * * *'     # 6 PM EST (23:00 UTC)
 
   workflow_dispatch:
     inputs:
