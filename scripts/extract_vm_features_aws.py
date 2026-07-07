@@ -403,7 +403,39 @@ def extract_and_accumulate(batch_date: str):
     print(f"WHOIS master: {len(masters['whois']['combined'])} rows", flush=True)
 
 
+def _cleanup_ec2_scratch():
+    """Remove every local file this script may have written on EC2.
+
+    EC2 is stateless scratch space — S3 is the only durable store. Anything
+    this script writes locally is a copy-of-a-copy and should not survive
+    the run, or the 8 GB root disk fills up in a few weeks.
+
+    Runs in a finally block so it happens even on crash/timeout.
+    """
+    import shutil
+
+    targets = [
+        # Scratch dirs the script itself creates
+        "vm_data",
+        # Local caches the whois.py / dns_ipwhois.py libraries write to
+        "data/processed/whois_results.csv",
+        "data/processed/dns_ipwhois_results.csv",
+        "logs/lookup_times.csv",
+    ]
+    for path in targets:
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif os.path.isfile(path):
+                os.remove(path)
+        except Exception as e:
+            # Cleanup must not raise — we might be in a finally after a crash.
+            print(f"  (cleanup skip: {path}: {e})", flush=True)
+
+
 if __name__ == "__main__":
+    import tempfile
+
     if len(sys.argv) == 2:
         batch_date = sys.argv[1]
     elif len(sys.argv) == 3:
@@ -413,4 +445,28 @@ if __name__ == "__main__":
         print("Example: python extract_vm_features_aws.py 20260125")
         sys.exit(1)
 
-    extract_and_accumulate(batch_date)
+    # Run inside a private tmp dir so paths like vm_data/... land there
+    # and are guaranteed cleaned up on process exit. Belt-and-suspenders:
+    # a finally block also nukes any explicit paths in case the tmp dir
+    # ever fails to auto-cleanup (SIGKILL, out-of-space during rm, etc).
+    original_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix="phishnet-extract-") as scratch:
+        # Symlink /home/ec2-user/phishnet's project code inside scratch,
+        # but keep vm_data etc as fresh empty subdirs of scratch. Simplest:
+        # just chdir there and let relative paths resolve there.
+        os.chdir(scratch)
+        try:
+            extract_and_accumulate(batch_date)
+        finally:
+            # Restore CWD before the TemporaryDirectory tries to nuke itself.
+            try:
+                os.chdir(original_cwd)
+            except Exception:
+                pass
+            # Also nuke the persistent paths under the phishnet project dir,
+            # since the script's imports (whois.py, dns_ipwhois.py) write to
+            # `data/processed/` and `logs/` relative to CWD *at import time* —
+            # which is the phishnet project dir, not our scratch tmp.
+            os.chdir(original_cwd)
+            _cleanup_ec2_scratch()
+            print("🧹 EC2 scratch cleanup done — disk returned to clean state.", flush=True)
