@@ -5,12 +5,11 @@ name: Unified ML Pipeline
 # Uses AWS (EC2, S3, RDS) for infrastructure
 
 on:
-  schedule:
-    # Twice daily schedule for data collection (6 AM and 6 PM EST)
-    - cron: '0 11 * * *'     # 6 AM EST (11:00 UTC)
-    - cron: '0 23 * * *'     # 6 PM EST (23:00 UTC)
-    # Sunday training is handled by load-config job checking day of week
-    # No separate Sunday cron needed (daily 11 UTC already covers it)
+  # SCHEDULE TEMPORARILY DISABLED while we iterate on the EC2 pipeline.
+  # Re-enable by uncommenting the schedule block below once a manual run is green.
+  # schedule:
+  #   - cron: '0 11 * * *'     # 6 AM EST (11:00 UTC)
+  #   - cron: '0 23 * * *'     # 6 PM EST (23:00 UTC)
 
   workflow_dispatch:
     inputs:
@@ -284,7 +283,7 @@ jobs:
           echo "Uploading updated VM script..."
           aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
 
-      - name: EC2 health check (DNS resolution)
+      - name: EC2 health check (DNS + disk + Python deps)
         id: ec2_health
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -292,18 +291,58 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 120s
-          command_timeout: 3m
+          command_timeout: 5m
           script: |
             set -euo pipefail
-            # DNS resolver check — recent runs died because every domain lookup timed out.
+
+            # ---- DNS resolver check ----
             echo "Testing DNS resolution on EC2..."
             timeout 10 getent hosts google.com > /dev/null || { echo "❌ DNS BROKEN on EC2"; exit 42; }
             timeout 10 getent hosts phishtank.org > /dev/null || { echo "❌ DNS partial fail"; exit 42; }
             timeout 10 python3.8 -c "import socket; socket.gethostbyname('cloudflare.com')" || { echo "❌ Python DNS broken"; exit 42; }
             echo "✅ DNS OK"
-            # Sanity: python3.8 + boto3 + the WHOIS/DNS libs load
+
+            # ---- Python deps ----
             python3.8 -c "import boto3, whois, dns.resolver, pandas" || { echo "❌ Python deps broken"; exit 43; }
             echo "✅ Python deps OK"
+
+            # ---- Disk usage + proactive cleanup ----
+            # The last silent-failure run was actually [Errno 28] No space left on device
+            # while downloading the extraction script. Clean up predictable bloat every run.
+            echo ""
+            echo "Disk usage BEFORE cleanup:"
+            df -h / | tail -1
+
+            # 1. Old daily checkpoints (any older than 2 days) — safe to delete, next
+            #    run's timestamped checkpoint won't collide.
+            find /home/ec2-user/phishnet/vm_data/checkpoints -type f -mtime +2 -delete 2>/dev/null || true
+            # 2. Old master CSVs cached locally on EC2 (S3 is source of truth)
+            find /home/ec2-user/phishnet/vm_data/master -type f -mtime +2 -delete 2>/dev/null || true
+            # 3. Old batch/url_queue files on EC2 — same, S3 is the queue
+            find /home/ec2-user/phishnet/vm_data/url_queue -type f -mtime +2 -delete 2>/dev/null || true
+            # 4. Package manager and pip caches — will be re-fetched if needed
+            rm -rf /home/ec2-user/.cache/pip 2>/dev/null || true
+            sudo yum clean all 2>/dev/null || true
+            sudo rm -rf /var/cache/yum 2>/dev/null || true
+            # 5. Old journalctl / log files rotated more than 3 days ago
+            sudo journalctl --vacuum-time=3d 2>/dev/null || true
+            # 6. WHOIS/DNS cache CSVs on disk — the S3 masters are the durable copy
+            rm -f /home/ec2-user/phishnet/data/processed/whois_results.csv 2>/dev/null || true
+            rm -f /home/ec2-user/phishnet/data/processed/dns_ipwhois_results.csv 2>/dev/null || true
+
+            echo ""
+            echo "Disk usage AFTER cleanup:"
+            df -h / | tail -1
+
+            # ---- Sanity: at least 500 MB free before we let extraction start ----
+            AVAIL_MB=$(df -m / | tail -1 | awk '{print $4}')
+            echo "Available: ${AVAIL_MB} MB"
+            if [ "$AVAIL_MB" -lt 500 ]; then
+              echo "❌ DISK STILL FULL after cleanup (${AVAIL_MB} MB free) — SSH into EC2 to investigate."
+              du -sh /home/ec2-user/* 2>/dev/null | sort -rh | head -10
+              exit 44
+            fi
+            echo "✅ Disk OK (${AVAIL_MB} MB free)"
 
       - name: Reboot EC2 if health check failed
         if: failure() && steps.ec2_health.conclusion == 'failure'

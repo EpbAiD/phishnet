@@ -348,9 +348,7 @@ def system_status():
 
         # Deployed model metadata — only written when a model passed all gates
         try:
-            obj = s3.get_object(
-                Bucket=S3_BUCKET, Key="models/deployed_metadata.json"
-            )
+            obj = s3.get_object(Bucket=S3_BUCKET, Key="models/deployed_metadata.json")
             meta = json.loads(obj["Body"].read().decode("utf-8"))
             last_trained_str = meta.get("last_trained")
             deployed_age_hours = None
