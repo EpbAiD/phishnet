@@ -484,6 +484,148 @@ jobs:
             echo "golden_passed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Validate against realistic-prior evaluation sets
+        id: prior_gates
+        if: steps.diversity.outputs.diversity_ok == 'true'
+        run: |
+          echo "=============================================="
+          echo "REALISTIC-PRIOR EVALUATION GATES"
+          echo "=============================================="
+          # The 50/50 golden test measures raw discrimination. These gates measure
+          # deployment-realistic behavior at two different phishing base rates:
+          #   - 20% phishing: user-submitted scanner UX (user is already suspicious)
+          #   - 5%  phishing: browser-integrated scan (every URL the user visits)
+          # At a low base rate, even a small false-positive rate produces terrible
+          # precision — this is exactly what a browser extension user experiences.
+
+          python3 << 'PYEOF'
+          import pandas as pd
+          import numpy as np
+          import joblib
+          import json
+          import sys
+          import os
+          sys.path.insert(0, '.')
+
+          from src.features.url_features import extract_single_url_features
+
+          # Gate thresholds per prior set. These are what the model must clear to
+          # deploy — matched to the operational needs of each deployment surface.
+          eval_sets = {
+              'user_prior_20pct': {
+                  'file': 'data/test/eval_user_prior_20pct.csv',
+                  'thresholds': {'precision_min': 0.85, 'recall_min': 0.90, 'fpr_max': 0.05},
+                  'purpose': 'User-submitted scanner (20% phishing base rate)',
+              },
+              'browser_prior_5pct': {
+                  'file': 'data/test/eval_browser_prior_5pct.csv',
+                  'thresholds': {'precision_min': 0.70, 'recall_min': 0.85, 'fpr_max': 0.02},
+                  'purpose': 'Browser-integrated scan (5% phishing base rate)',
+              },
+          }
+
+          # Reuse the best URL model (same one the golden gate uses)
+          cv_results = pd.read_csv('analysis/url_cv_results.csv')
+          best_model_name = cv_results.iloc[0]['model']
+          model = joblib.load(f'models/url_{best_model_name}.pkl')
+          feature_cols = joblib.load(f'models/url_{best_model_name}_feature_cols.pkl')
+
+          all_results = {}
+          any_failed = False
+
+          for eval_name, cfg in eval_sets.items():
+              print(f"\n{'='*70}")
+              print(f"  EVAL SET: {eval_name}")
+              print(f"  Purpose:  {cfg['purpose']}")
+              print(f"{'='*70}")
+
+              df = pd.read_csv(cfg['file'])
+              print(f"  URLs: {len(df)}  (phishing={int((df['label']=='phishing').sum())}, "
+                    f"legit={int((df['label']=='legitimate').sum())})")
+              print(f"  Actual phishing prior: {(df['label']=='phishing').mean()*100:.1f}%")
+
+              # Extract features
+              feats = []
+              for _, row in df.iterrows():
+                  try:
+                      f = extract_single_url_features(row['url'])
+                  except Exception:
+                      f = {}
+                  f['url'] = row['url']
+                  f['label'] = row['label']
+                  feats.append(f)
+              df_feats = pd.DataFrame(feats)
+
+              # Prepare features to match training column order
+              for col in feature_cols:
+                  if col not in df_feats.columns:
+                      df_feats[col] = 0
+              X = df_feats[feature_cols].fillna(0)
+              for col in X.columns:
+                  if X[col].dtype == 'object':
+                      X[col], _ = pd.factorize(X[col])
+
+              y_true = df_feats['label'].apply(lambda x: 1 if x == 'phishing' else 0).values
+              y_pred = model.predict(X)
+
+              # Precision, recall, FPR at the model's default threshold
+              tp = int(((y_true == 1) & (y_pred == 1)).sum())
+              fp = int(((y_true == 0) & (y_pred == 1)).sum())
+              tn = int(((y_true == 0) & (y_pred == 0)).sum())
+              fn = int(((y_true == 1) & (y_pred == 0)).sum())
+              precision = tp / max(tp + fp, 1)
+              recall    = tp / max(tp + fn, 1)  # aka phishing detection rate
+              fpr       = fp / max(fp + tn, 1)  # false-positive rate on legit URLs
+              accuracy  = (tp + tn) / len(y_true)
+
+              t = cfg['thresholds']
+              p_ok = precision >= t['precision_min']
+              r_ok = recall    >= t['recall_min']
+              f_ok = fpr       <= t['fpr_max']
+              passed = p_ok and r_ok and f_ok
+
+              status = "✅ PASSED" if passed else "🚫 FAILED"
+              print(f"\n  Precision:  {precision*100:5.1f}%  (>= {t['precision_min']*100:.0f}%)  {'✓' if p_ok else '✗'}")
+              print(f"  Recall:     {recall*100:5.1f}%  (>= {t['recall_min']*100:.0f}%)  {'✓' if r_ok else '✗'}")
+              print(f"  FPR:        {fpr*100:5.1f}%  (<= {t['fpr_max']*100:.0f}%)  {'✓' if f_ok else '✗'}")
+              print(f"  Accuracy:   {accuracy*100:5.1f}%")
+              print(f"  TP={tp} FP={fp} TN={tn} FN={fn}")
+              print(f"  {status}")
+
+              all_results[eval_name] = {
+                  'purpose': cfg['purpose'],
+                  'n_urls': len(df),
+                  'phishing_prior': round((df['label']=='phishing').mean(), 4),
+                  'precision': round(precision, 4),
+                  'recall': round(recall, 4),
+                  'fpr': round(fpr, 4),
+                  'accuracy': round(accuracy, 4),
+                  'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn,
+                  'passed': bool(passed),
+                  'thresholds': t,
+              }
+              if not passed:
+                  any_failed = True
+
+          os.makedirs('analysis', exist_ok=True)
+          with open('analysis/prior_gate_results.json', 'w') as f:
+              json.dump(all_results, f, indent=2)
+
+          if any_failed:
+              print("\n🚫 PRIOR GATES FAILED — deployment blocked (see per-set details above).")
+              with open('PRIOR_GATES_FAILED', 'w') as f:
+                  f.write(json.dumps(all_results, indent=2))
+          else:
+              print("\n✅ All realistic-prior gates PASSED.")
+          PYEOF
+
+          if [ -f "PRIOR_GATES_FAILED" ]; then
+            echo "::warning::Realistic-prior gates FAILED - model does not meet operational thresholds at deployment base rates."
+            echo "prior_passed=false" >> $GITHUB_OUTPUT
+          else
+            echo "prior_passed=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Compare AUC with previous model
         id: auc_gate
         if: steps.diversity.outputs.diversity_ok == 'true'
@@ -556,6 +698,7 @@ jobs:
         if: >-
           steps.diversity.outputs.diversity_ok == 'true' &&
           steps.golden_gate.outputs.golden_passed == 'true' &&
+          steps.prior_gates.outputs.prior_passed == 'true' &&
           steps.auc_gate.outputs.auc_passed != 'false'
         run: |
           echo "=============================================="
@@ -617,6 +760,7 @@ jobs:
         if: >-
           steps.diversity.outputs.diversity_ok == 'true' &&
           steps.golden_gate.outputs.golden_passed == 'true' &&
+          steps.prior_gates.outputs.prior_passed == 'true' &&
           steps.auc_gate.outputs.auc_passed != 'false'
         run: |
           # Get total training samples from metadata
@@ -659,14 +803,19 @@ jobs:
           echo "Run ID: ${{ github.run_id }}"
           echo ""
           echo "Gate Results:"
-          echo "  Diversity check:    ${{ steps.diversity.outputs.diversity_ok || 'skipped' }}"
-          echo "  Golden test gate:   ${{ steps.golden_gate.outputs.golden_passed || 'skipped' }}"
-          echo "  AUC regression:     ${{ steps.auc_gate.outputs.auc_passed || 'skipped' }}"
+          echo "  Diversity check:        ${{ steps.diversity.outputs.diversity_ok || 'skipped' }}"
+          echo "  Golden test gate:       ${{ steps.golden_gate.outputs.golden_passed || 'skipped' }}"
+          echo "  Realistic-prior gates:  ${{ steps.prior_gates.outputs.prior_passed || 'skipped' }}"
+          echo "  AUC regression:         ${{ steps.auc_gate.outputs.auc_passed || 'skipped' }}"
           echo ""
 
           if [ "${{ steps.golden_gate.outputs.golden_passed }}" == "false" ]; then
             echo "🚫 DEPLOYMENT BLOCKED: Golden test gate failed"
             echo "   Safe URLs are being flagged as phishing - model not deployed"
+            echo "   Previous production model remains active"
+          elif [ "${{ steps.prior_gates.outputs.prior_passed }}" == "false" ]; then
+            echo "🚫 DEPLOYMENT BLOCKED: Realistic-prior gates failed"
+            echo "   Model does not meet operational thresholds at deployment base rates"
             echo "   Previous production model remains active"
           elif [ "${{ steps.auc_gate.outputs.auc_passed }}" == "false" ]; then
             echo "🚫 DEPLOYMENT BLOCKED: AUC regression detected"
