@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PhishNet — System Status</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #1a1f28;
+    --border: #2b3341;
+    --text: #d9dee7;
+    --muted: #8b95a7;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { padding: 24px; max-width: 1000px; margin: 0 auto; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .metric { font-size: 22px; font-weight: 600; }
+  .subtle { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pill.ok { background: rgba(63, 185, 80, 0.15); color: var(--ok); }
+  .pill.warn { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
+  .pill.bad { background: rgba(248, 81, 73, 0.15); color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+  ul.warnings { list-style: none; padding: 0; margin: 0; }
+  ul.warnings li {
+    padding: 8px 12px;
+    border-left: 3px solid var(--warn);
+    background: rgba(210, 153, 34, 0.05);
+    margin-bottom: 8px;
+    border-radius: 0 4px 4px 0;
+    font-size: 14px;
+  }
+  ul.warnings.empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+  footer { padding: 16px 24px; color: var(--muted); font-size: 12px; text-align: center; border-top: 1px solid var(--border); margin-top: 32px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .loading { color: var(--muted); font-style: italic; }
+  code { background: rgba(255,255,255,0.05); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PhishNet — System Status</h1>
+  <p>Live automated health report • Refreshes every 60 s</p>
+</header>
+
+<main>
+
+  <div class="row">
+    <div class="card">
+      <h2>Overall</h2>
+      <div id="overall" class="loading">Loading…</div>
+      <div class="subtle" id="last-checked">—</div>
+    </div>
+    <div class="card">
+      <h2>Deployed Model Age</h2>
+      <div id="model-age" class="metric loading">…</div>
+      <div class="subtle" id="model-trained">—</div>
+    </div>
+    <div class="card">
+      <h2>API</h2>
+      <div id="api-status" class="metric loading">…</div>
+      <div class="subtle" id="api-reloads">—</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 24px;">
+    <h2>Warnings</h2>
+    <ul id="warnings" class="warnings empty"><li>Loading…</li></ul>
+  </div>
+
+  <div class="card" style="margin-bottom: 24px;">
+    <h2>Master Datasets</h2>
+    <table id="masters">
+      <thead>
+        <tr><th>Feature</th><th>Size</th><th>Last updated</th><th>Age</th></tr>
+      </thead>
+      <tbody><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Deployed Ensemble</h2>
+    <table id="ensemble">
+      <thead>
+        <tr><th>Signal</th><th>Model</th><th>Weight</th><th>CV AUC</th></tr>
+      </thead>
+      <tbody><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+    </table>
+    <div class="subtle" id="golden" style="margin-top: 12px;">—</div>
+  </div>
+
+</main>
+
+<footer>
+  Data source: <code>/status</code> on <a href="https://phishnet-api.onrender.com">phishnet-api.onrender.com</a>
+  · <a href="../">Back to scanner</a>
+</footer>
+
+<script>
+const API = "https://phishnet-api.onrender.com/status";
+
+function fmt(n, digits) {
+  if (n === null || n === undefined) return "—";
+  return Number(n).toFixed(digits || 2);
+}
+
+function pill(label, kind) {
+  return `<span class="pill ${kind}">${label}</span>`;
+}
+
+function pickPillFromAge(hours, warnAt, badAt) {
+  if (hours == null) return pill("unknown", "warn");
+  if (hours > badAt) return pill(`${hours}h — stale`, "bad");
+  if (hours > warnAt) return pill(`${hours}h — aging`, "warn");
+  return pill(`${hours}h`, "ok");
+}
+
+async function load() {
+  const overall = document.getElementById("overall");
+  const lastChecked = document.getElementById("last-checked");
+  const modelAge = document.getElementById("model-age");
+  const modelTrained = document.getElementById("model-trained");
+  const apiStatus = document.getElementById("api-status");
+  const apiReloads = document.getElementById("api-reloads");
+  const warningsEl = document.getElementById("warnings");
+  const mastersEl = document.querySelector("#masters tbody");
+  const ensembleEl = document.querySelector("#ensemble tbody");
+  const goldenEl = document.getElementById("golden");
+
+  let d;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90000);
+    const res = await fetch(API, { signal: ctrl.signal, cache: "no-store" });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    d = await res.json();
+  } catch (e) {
+    overall.innerHTML = pill("API unreachable", "bad");
+    lastChecked.textContent = `Error: ${e.message} • ${new Date().toLocaleTimeString()}`;
+    modelAge.textContent = "—";
+    apiStatus.textContent = "—";
+    warningsEl.classList.remove("empty");
+    warningsEl.innerHTML = `<li>API did not respond within 90 s (Render cold-start or actually down).</li>`;
+    mastersEl.innerHTML = `<tr><td colspan="4">—</td></tr>`;
+    ensembleEl.innerHTML = `<tr><td colspan="4">—</td></tr>`;
+    return;
+  }
+
+  // Overall
+  const state = d.overall || "unknown";
+  const kind = state === "healthy" ? "ok" : state === "degraded" ? "warn" : "bad";
+  overall.innerHTML = pill(state.toUpperCase(), kind);
+  lastChecked.textContent = `Checked ${new Date().toLocaleTimeString()}`;
+
+  // Deployed model
+  const dep = d.deployed_model || {};
+  modelAge.innerHTML = pickPillFromAge(dep.age_hours, 24, 48);
+  modelTrained.textContent = dep.last_trained
+    ? `Trained: ${new Date(dep.last_trained).toLocaleString()}`
+    : "No deployed model metadata";
+
+  // API
+  const api = d.api || {};
+  apiStatus.innerHTML = pill(api.status || "unknown", api.status === "ok" ? "ok" : "bad");
+  apiReloads.textContent = `Hot reloads: ${api.reload_count ?? 0} • Enabled: ${api.hot_reload_enabled ? "yes" : "no"}`;
+
+  // Warnings
+  const warns = d.warnings || [];
+  if (warns.length === 0) {
+    warningsEl.classList.add("empty");
+    warningsEl.innerHTML = `<li>None ✅</li>`;
+  } else {
+    warningsEl.classList.remove("empty");
+    warningsEl.innerHTML = warns.map(w => `<li>${w}</li>`).join("");
+  }
+
+  // Masters
+  const masters = d.masters || {};
+  const mNames = ["url", "dns", "whois"];
+  mastersEl.innerHTML = mNames.map(name => {
+    const m = masters[name] || {};
+    if (m.error) return `<tr><td>${name.toUpperCase()}</td><td colspan="3">${m.error}</td></tr>`;
+    const ageStr = m.age_hours != null
+      ? pickPillFromAge(m.age_hours, 24, 48)
+      : "—";
+    return `<tr>
+      <td>${name.toUpperCase()}</td>
+      <td>${m.size_mb ?? "—"} MB</td>
+      <td>${m.last_modified ? new Date(m.last_modified).toLocaleString() : "—"}</td>
+      <td>${ageStr}</td>
+    </tr>`;
+  }).join("");
+
+  // Ensemble
+  const ensembleModels = dep.models || {};
+  const ensembleWeights = dep.weights || {};
+  const cv = dep.cv_performance || {};
+  const signals = ["url", "dns", "whois"];
+  ensembleEl.innerHTML = signals.map(s => `<tr>
+    <td>${s.toUpperCase()}</td>
+    <td>${ensembleModels[s] ?? "—"}</td>
+    <td>${ensembleWeights[s] != null ? fmt(ensembleWeights[s] * 100, 1) + "%" : "—"}</td>
+    <td>${cv[`${s}_roc_auc`] != null ? fmt(cv[`${s}_roc_auc`], 4) : "—"}</td>
+  </tr>`).join("");
+
+  const gt = dep.golden_test || {};
+  if (Object.keys(gt).length) {
+    goldenEl.textContent =
+      `Golden test — safe-URL accuracy: ${fmt((gt.safe_url_accuracy ?? 0) * 100, 1)}%, ` +
+      `FPR: ${fmt((gt.false_positive_rate ?? 0) * 100, 1)}%, ` +
+      `phishing detection: ${fmt((gt.phishing_detection_rate ?? 0) * 100, 1)}%`;
+  } else {
+    goldenEl.textContent = "No golden-test results available.";
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+
+</body>
+</html>

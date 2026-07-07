@@ -8,6 +8,7 @@ on:
       - 'web-app/**'
       - 'browser_extension/**'
       - 'docs/**'
+      - 'dashboard/**'
   workflow_dispatch:
 
 permissions:
@@ -61,6 +62,12 @@ jobs:
           if [ -d "docs" ]; then
             mkdir -p _site/docs
             cp -r docs/* _site/docs/
+          fi
+
+          # Static status dashboard — auto-refreshes from the API's /status endpoint
+          if [ -d "dashboard" ]; then
+            mkdir -p _site/dashboard
+            cp -r dashboard/* _site/dashboard/
           fi
 
           echo "📦 Deployment directory contents:"

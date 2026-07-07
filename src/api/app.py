@@ -315,6 +315,114 @@ def health_check():
     }
 
 
+@app.get("/status")
+def system_status():
+    """Full system health report — one call tells you if the pipeline is alive.
+
+    Reports model deployment info + dataset freshness so a monitor can tell
+    whether the automated pipeline is still growing the masters and shipping
+    new models. Everything is derived from S3 (single source of truth) rather
+    than the API's local state, so a stale API pod still reports accurately.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    report = {
+        "api": {
+            "status": "ok",
+            "hot_reload_enabled": model_state["enabled"],
+            "reload_count": model_state["reload_count"],
+            "last_reload": (
+                model_state["last_reload"].isoformat()
+                if model_state["last_reload"]
+                else None
+            ),
+        },
+        "deployed_model": {},
+        "masters": {},
+        "warnings": [],
+    }
+
+    try:
+        s3 = boto3.client("s3", region_name=AWS_REGION)
+
+        # Deployed model metadata — only written when a model passed all gates
+        try:
+            obj = s3.get_object(
+                Bucket=S3_BUCKET, Key="models/deployed_metadata.json"
+            )
+            meta = json.loads(obj["Body"].read().decode("utf-8"))
+            last_trained_str = meta.get("last_trained")
+            deployed_age_hours = None
+            if last_trained_str:
+                try:
+                    dt = datetime.fromisoformat(last_trained_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    deployed_age_hours = round((now - dt).total_seconds() / 3600, 1)
+                except Exception:
+                    pass
+            ensemble = meta.get("ensemble", {})
+            report["deployed_model"] = {
+                "last_trained": last_trained_str,
+                "age_hours": deployed_age_hours,
+                "training_run": meta.get("training_run"),
+                "models": ensemble.get("models", {}),
+                "weights": ensemble.get("weights", {}),
+                "cv_performance": ensemble.get("cv_performance", {}),
+                "golden_test": meta.get("golden_test", {}),
+            }
+            # Alert if the deployed model is stale
+            if deployed_age_hours is not None and deployed_age_hours > 48:
+                report["warnings"].append(
+                    f"Deployed model is {deployed_age_hours}h old (>48h) — "
+                    f"retrain may be failing or gates may be blocking deployment."
+                )
+        except Exception as e:
+            report["deployed_model"] = {"error": str(e)}
+            report["warnings"].append(f"Could not read deployed_metadata.json: {e}")
+
+        # Master dataset freshness — the pipeline should be updating these
+        for name in ("url", "dns", "whois"):
+            key = f"master/{name}_features_master.csv"
+            try:
+                head = s3.head_object(Bucket=S3_BUCKET, Key=key)
+                last_mod = head["LastModified"]
+                if last_mod.tzinfo is None:
+                    last_mod = last_mod.replace(tzinfo=timezone.utc)
+                age_hours = round((now - last_mod).total_seconds() / 3600, 1)
+                size_bytes = head["ContentLength"]
+                report["masters"][name] = {
+                    "last_modified": last_mod.isoformat(),
+                    "age_hours": age_hours,
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 2),
+                }
+                # Alert if a master hasn't been updated in over 24 hours
+                # (pipeline runs twice daily; 24h means at least 2 runs missed)
+                if age_hours > 24:
+                    report["warnings"].append(
+                        f"{name.upper()} master is {age_hours}h old "
+                        f"(>24h) — data collection pipeline may be broken."
+                    )
+            except Exception as e:
+                report["masters"][name] = {"error": str(e)}
+                report["warnings"].append(f"Could not read {name} master: {e}")
+
+    except Exception as e:
+        report["warnings"].append(f"S3 access failed: {e}")
+
+    # Overall health: OK if no warnings, DEGRADED if some, DOWN if API broken
+    if not report["warnings"]:
+        report["overall"] = "healthy"
+    elif len(report["warnings"]) < 3:
+        report["overall"] = "degraded"
+    else:
+        report["overall"] = "unhealthy"
+
+    return report
+
+
 def save_scan_to_db(
     url: str,
     prediction: int,
