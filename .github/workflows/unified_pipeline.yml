@@ -315,6 +315,12 @@ jobs:
             rm -rf /home/ec2-user/phishnet/vm_data/incremental/*                   2>/dev/null || true
             rm -rf /home/ec2-user/.cache/pip                                       2>/dev/null || true
 
+            # Systemd journal was the other big offender (833 MB in the last run).
+            # Vacuum-size is fast (unlike --vacuum-time) and caps it at 100 MB.
+            sudo journalctl --vacuum-size=100M 2>/dev/null || true
+            sudo rm -f /var/log/messages-* /var/log/wtmp-* /var/log/*.gz 2>/dev/null || true
+            sudo rm -f /var/log/cloud-init.log /var/log/cloud-init-output.log 2>/dev/null || true
+
             # ---- Now the real health checks ----
             echo "Testing DNS resolution on EC2..."
             timeout 10 getent hosts google.com     > /dev/null || { echo "❌ DNS BROKEN on EC2"; exit 42; }
