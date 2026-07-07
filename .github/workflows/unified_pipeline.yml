@@ -284,6 +284,44 @@ jobs:
           echo "Uploading updated VM script..."
           aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
 
+      - name: EC2 health check (DNS resolution)
+        id: ec2_health
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 120s
+          command_timeout: 3m
+          script: |
+            set -euo pipefail
+            # DNS resolver check — recent runs died because every domain lookup timed out.
+            echo "Testing DNS resolution on EC2..."
+            timeout 10 getent hosts google.com > /dev/null || { echo "❌ DNS BROKEN on EC2"; exit 42; }
+            timeout 10 getent hosts phishtank.org > /dev/null || { echo "❌ DNS partial fail"; exit 42; }
+            timeout 10 python3.8 -c "import socket; socket.gethostbyname('cloudflare.com')" || { echo "❌ Python DNS broken"; exit 42; }
+            echo "✅ DNS OK"
+            # Sanity: python3.8 + boto3 + the WHOIS/DNS libs load
+            python3.8 -c "import boto3, whois, dns.resolver, pandas" || { echo "❌ Python deps broken"; exit 43; }
+            echo "✅ Python deps OK"
+
+      - name: Reboot EC2 if health check failed
+        if: failure() && steps.ec2_health.conclusion == 'failure'
+        run: |
+          echo "⚠️ EC2 health check failed — rebooting the instance to restore DNS/state."
+          aws ec2 reboot-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+          echo "Reboot requested. Waiting 90s for instance to come back..."
+          sleep 90
+          # Get the (possibly new) public IP after reboot
+          EC2_IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "EC2 Public IP after reboot: $EC2_IP"
+          echo "Reboot done — the next scheduled run will retry extraction."
+          # Fail this run explicitly so we don't mask the broken state as success
+          exit 1
+
       - name: EC2 Processing (DNS/WHOIS extraction + accumulation)
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -296,10 +334,35 @@ jobs:
           command_timeout: 360m
           envs: BATCH_DATE
           script: |
+            # Fail loudly on ANY error — recent runs "succeeded" while doing nothing
+            # because a script crash was swallowed and the trailing echo returned 0.
+            set -euo pipefail
             cd /home/ec2-user/phishnet
             aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
             python3.8 scripts/extract_vm_features_aws.py $BATCH_DATE
             echo "✅ EC2 processing complete - master dataset updated in S3"
+
+      - name: Verify extraction actually happened
+        run: |
+          # Detect silent no-op runs: the extraction step "succeeded" but nothing
+          # new was extracted. Confirm today's DNS/WHOIS master timestamps are recent.
+          echo "Verifying S3 masters were updated recently..."
+          THRESHOLD_MIN=180  # accept anything updated in the last 3 hours
+          for master in dns_features_master.csv whois_features_master.csv; do
+            LAST_MODIFIED=$(aws s3api head-object \
+              --bucket ${{ env.S3_BUCKET }} \
+              --key "master/${master}" \
+              --query 'LastModified' --output text)
+            LAST_EPOCH=$(date -d "$LAST_MODIFIED" +%s)
+            NOW_EPOCH=$(date +%s)
+            AGE_MIN=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
+            echo "  ${master}: last modified ${AGE_MIN} min ago"
+            if [ "$AGE_MIN" -gt "$THRESHOLD_MIN" ]; then
+              echo "❌ ${master} not updated in the last ${THRESHOLD_MIN} min — extraction likely silently failed."
+              exit 1
+            fi
+          done
+          echo "✅ Both masters updated recently."
 
       - name: Stop EC2 instance
         if: always()
