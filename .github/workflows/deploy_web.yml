@@ -50,12 +50,19 @@ jobs:
           # Copy React build output
           cp -r web-app/build/* _site/
 
-          # Copy browser extension (as downloadable)
+          # Build the extension zip from the RAW browser_extension folder
+          # (so the zip contains only real extension files — not our install
+          # page's index.html which CRA already dropped into _site/extension/).
           if [ -d "browser_extension" ]; then
-            mkdir -p _site/extension
-            cp -r browser_extension/* _site/extension/
-            # Create zip for easy download
-            cd _site/extension && zip -r ../phishnet-extension.zip . && cd ../..
+            (cd browser_extension && zip -r "$GITHUB_WORKSPACE/_site/phishnet-extension.zip" .)
+            # Then expose the install page + zip under /extension/.
+            # The install page (web-app/public/extension/index.html) was copied
+            # to _site/extension/index.html by the React build step above.
+            # We deliberately do NOT copy the raw extension source files to
+            # _site/extension/, so the /extension/ URL renders index.html and
+            # only the zip is exposed for download.
+            echo "Extension package built at _site/phishnet-extension.zip"
+            ls -lh _site/phishnet-extension.zip
           fi
 
           # Copy docs if exists

@@ -57,7 +57,11 @@ function App() {
         </main>
 
         <footer className="footer">
-          <p>PhishNet - Protecting users from phishing attacks</p>
+          <p>
+            PhishNet - Protecting users from phishing attacks &nbsp;·&nbsp;
+            <a href="/phishnet/extension/">Install browser extension</a> &nbsp;·&nbsp;
+            <a href="/phishnet/dashboard/">System status</a>
+          </p>
         </footer>
       </div>
     </Router>

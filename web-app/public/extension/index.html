@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PhishNet — Install the Browser Extension</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #1a1f28;
+    --border: #2b3341;
+    --text: #d9dee7;
+    --muted: #8b95a7;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 40px 24px; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  h2 { margin: 32px 0 12px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  p, li { color: var(--text); }
+  p.subtitle { color: var(--muted); margin: 0 0 32px; }
+  .cta {
+    display: inline-block;
+    background: var(--accent);
+    color: #0e1116;
+    text-decoration: none;
+    padding: 12px 20px;
+    border-radius: 6px;
+    font-weight: 600;
+    margin: 8px 0;
+  }
+  .cta:hover { opacity: 0.9; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  ol { padding-left: 20px; }
+  ol li { margin-bottom: 10px; }
+  code {
+    background: rgba(255,255,255,0.06);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .note {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 8px;
+  }
+  a { color: var(--accent); }
+  footer {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Install the PhishNet Browser Extension</h1>
+  <p class="subtitle">Real-time phishing detection on every page you visit.</p>
+
+  <div class="card">
+    <a class="cta" href="../phishnet-extension.zip" download>Download extension (.zip)</a>
+    <p class="note">Manifest v3. Works in Chrome, Edge, Brave, and any Chromium-based browser.</p>
+  </div>
+
+  <h2>Install in Chrome / Edge / Brave</h2>
+  <div class="card">
+    <ol>
+      <li><strong>Download</strong> the zip using the button above.</li>
+      <li><strong>Unzip</strong> the folder somewhere you won't move or delete (e.g. <code>~/phishnet-extension/</code>). If you delete the folder, the extension breaks.</li>
+      <li>Open <code>chrome://extensions/</code> in a new tab (or <code>edge://extensions/</code>, <code>brave://extensions/</code>).</li>
+      <li>Turn on <strong>Developer mode</strong> (toggle in the top-right corner).</li>
+      <li>Click <strong>Load unpacked</strong> (top-left), and select the unzipped folder.</li>
+      <li>The extension appears in your extension list and the toolbar. Click the puzzle-piece icon and pin it for quick access.</li>
+    </ol>
+  </div>
+
+  <h2>Using It</h2>
+  <div class="card">
+    <p>Click the PhishNet icon on any tab. It sends the current URL to <a href="https://phishnet-api.onrender.com/health" target="_blank" rel="noopener">the API</a>, gets a phishing verdict, and shows an explanation.</p>
+    <p class="note">First click after inactivity may take ~30 seconds — the API runs on Render's free tier and cold-starts when idle.</p>
+  </div>
+
+  <h2>Not on Chromium?</h2>
+  <div class="card">
+    <p>Firefox uses a different extension format (WebExtensions with a slightly different manifest). This build doesn't ship as a Firefox add-on yet. Safari and Firefox support would require repackaging — not currently on the roadmap.</p>
+  </div>
+
+  <footer>
+    <a href="../">← Back to Scanner</a>
+    &nbsp;·&nbsp;
+    <a href="../dashboard/">System status dashboard</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/EpbAiD/phishnet" target="_blank" rel="noopener">Source on GitHub</a>
+  </footer>
+</main>
+</body>
+</html>
