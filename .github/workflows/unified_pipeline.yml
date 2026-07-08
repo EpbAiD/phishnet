@@ -143,7 +143,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: load-config
     if: needs.load-config.outputs.should_run_data == 'true'
-    timeout-minutes: 180
+    timeout-minutes: 350  # 5h50m — under the 6h GH Actions hard cap, headroom for a 3K-URL EC2 extraction (~5h) plus fetch/setup overhead
 
     steps:
       - name: Checkout code

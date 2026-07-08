@@ -16,7 +16,11 @@ stages:
   # STAGE 1: Data Collection
   data_collection:
     frequency: "twice_daily" # Every 12 hours for faster data growth
-    num_urls: 500            # URLs per collection - 50:50 balanced (phishing:legitimate) - reduced from 1000 to prevent SSH timeouts
+    # Batch size bumped from 500 -> 3000 to accelerate reaching a balanced
+    # master. At ~6s per URL for DNS+WHOIS on EC2, 3000 URLs takes ~5h — well
+    # under the 6h GitHub Actions job cap. Tier logic still applies per batch
+    # (e.g. 95/5 legit/phish when master is <30% legit -> +2850 legit per run).
+    num_urls: 3000
     enabled: true
 
   # STAGE 2: Feature Extraction (VM Processing)

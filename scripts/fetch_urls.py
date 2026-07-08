@@ -942,6 +942,112 @@ def fetch_tranco_legitimate_urls(count: int, existing_urls: set = None):
         return []
 
 
+def fetch_umbrella_legitimate_urls(count: int, existing_urls: set = None):
+    """Fetch legitimate URLs from Cisco Umbrella top-1M popularity list.
+
+    Different methodology from Tranco (DNS-query-based, not referring-domain-
+    based), so it surfaces different domains — meaningful diversity for the
+    legit training distribution.
+    """
+    import random
+    import zipfile
+    import io
+    import csv
+
+    if existing_urls is None:
+        existing_urls = set()
+
+    print(f"→ Fetching up to {count} legitimate URLs from Cisco Umbrella top 1M...")
+
+    try:
+        response = requests.get(
+            "https://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip",
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            csv_filename = zf.namelist()[0]
+            with zf.open(csv_filename) as f:
+                reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8"))
+                # Umbrella format: rank,domain — take top 100K (high confidence)
+                domains = []
+                for row in reader:
+                    if len(row) >= 2:
+                        try:
+                            rank = int(row[0])
+                        except ValueError:
+                            continue
+                        domain = row[1].strip()
+                        if rank <= 100000 and domain:
+                            domains.append(domain)
+
+        print(f"  ✓ Downloaded {len(domains)} Umbrella domains")
+        urls = []
+        random.shuffle(domains)
+        for domain in domains:
+            if len(urls) >= count:
+                break
+            url = f"https://{domain}"
+            if url not in existing_urls:
+                urls.append({"url": url, "label": "legitimate", "source": "umbrella"})
+        print(f"  ✓ {len(urls)} new Umbrella URLs (after filtering existing)")
+        return urls
+    except Exception as e:
+        print(f"  ✗ Umbrella download failed: {e}")
+        return []
+
+
+def fetch_majestic_legitimate_urls(count: int, existing_urls: set = None):
+    """Fetch legitimate URLs from the Majestic Million ranked-domains list.
+
+    Referring-subnet-based ranking — third independent methodology alongside
+    Tranco and Umbrella. Increases legit-source diversity so we're not
+    single-source-dependent, and diversifies the training distribution.
+    """
+    import random
+    import csv
+    import io
+
+    if existing_urls is None:
+        existing_urls = set()
+
+    print(f"→ Fetching up to {count} legitimate URLs from Majestic Million...")
+
+    try:
+        # Majestic serves the CSV directly (no zip), ~50 MB.
+        response = requests.get(
+            "https://downloads.majestic.com/majestic_million.csv",
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        reader = csv.DictReader(io.StringIO(response.text))
+        # Majestic columns include GlobalRank,TldRank,Domain,TLD,RefSubNets,...
+        domains = []
+        for row in reader:
+            try:
+                rank = int(row.get("GlobalRank", 0))
+            except (TypeError, ValueError):
+                continue
+            domain = (row.get("Domain") or "").strip()
+            if rank and rank <= 100000 and domain:
+                domains.append(domain)
+
+        print(f"  ✓ Downloaded {len(domains)} Majestic domains")
+        urls = []
+        random.shuffle(domains)
+        for domain in domains:
+            if len(urls) >= count:
+                break
+            url = f"https://{domain}"
+            if url not in existing_urls:
+                urls.append({"url": url, "label": "legitimate", "source": "majestic"})
+        print(f"  ✓ {len(urls)} new Majestic URLs (after filtering existing)")
+        return urls
+    except Exception as e:
+        print(f"  ✗ Majestic download failed: {e}")
+        return []
+
+
 def fetch_urls(output_file: str, target_count: int = 1000):
     """
     Fetch URLs from ALL public sources and deduplicate against master.
@@ -1103,29 +1209,54 @@ def fetch_urls(output_file: str, target_count: int = 1000):
     print()
     print(f"BATCH RATIO: {adaptive_msg}")
 
-    # Generate legitimate URLs — Tranco first, hardcoded as supplement
+    # Generate legitimate URLs from three independent, methodologically-diverse
+    # ranked-domain sources — Tranco (referring-domains), Cisco Umbrella
+    # (DNS-query-based), Majestic (referring-subnets). Pool them, dedupe
+    # internally + against master, then sample. This spreads dependency across
+    # three CSVs so if one is rate-limited/down we still hit target.
+    # Hardcoded fallback catches truly rare degenerate cases.
     print()
+    # Ask each source for the full needed amount — they'll each dedupe against
+    # existing_urls independently, so we may get overlap between sources.
+    # We de-dupe again after pooling.
     tranco_urls = fetch_tranco_legitimate_urls(n_legit, existing_urls)
-    # Add collected_at to legitimate URLs
-    for u in tranco_urls:
+    umbrella_urls = fetch_umbrella_legitimate_urls(n_legit, existing_urls)
+    majestic_urls = fetch_majestic_legitimate_urls(n_legit, existing_urls)
+
+    all_legit_pool = tranco_urls + umbrella_urls + majestic_urls
+    for u in all_legit_pool:
         u['collected_at'] = collected_at
-    df_tranco = (
-        pd.DataFrame(tranco_urls)
-        if tranco_urls
+
+    df_pool = (
+        pd.DataFrame(all_legit_pool)
+        if all_legit_pool
         else pd.DataFrame(columns=["url", "label", "source", "collected_at"])
     )
+    # Internal dedupe: same URL may appear from multiple ranked lists.
+    if len(df_pool):
+        before = len(df_pool)
+        df_pool = df_pool.drop_duplicates(subset=["url"], keep="first")
+        print(
+            f"  ✓ Pooled {before} legit URLs from Tranco+Umbrella+Majestic; "
+            f"{len(df_pool)} unique after cross-source dedupe"
+        )
 
-    # Supplement with hardcoded domains if Tranco didn't return enough
-    tranco_count = len(df_tranco)
-    remaining_needed = n_legit - tranco_count
+    # Supplement with hardcoded domains only if the three sources combined
+    # couldn't produce enough (e.g. all three rate-limited on the same day).
+    pool_count = len(df_pool)
+    remaining_needed = n_legit - pool_count
     if remaining_needed > 0:
         hardcoded_urls = generate_legitimate_urls(remaining_needed, unique_suffix=False)
         for u in hardcoded_urls:
             u['collected_at'] = collected_at
         df_hardcoded = pd.DataFrame(hardcoded_urls)
-        df_legit = pd.concat([df_tranco, df_hardcoded], ignore_index=True)
+        df_legit = pd.concat([df_pool, df_hardcoded], ignore_index=True)
+        print(f"  ✓ Added {len(df_hardcoded)} hardcoded fallback URLs (sources short)")
     else:
-        df_legit = df_tranco
+        df_legit = df_pool
+
+    # Keep tranco_count as a reporting variable for the summary block below.
+    tranco_count = int((df_pool["source"] == "tranco").sum()) if len(df_pool) else 0
 
     df_legit = df_legit.drop_duplicates(subset=["url"])
     # Also filter legit URLs against master
