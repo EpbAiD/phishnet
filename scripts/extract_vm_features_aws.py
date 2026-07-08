@@ -118,11 +118,17 @@ def extract_and_accumulate(batch_date: str):
 
     s3 = boto3.client('s3', region_name=AWS_REGION)
 
-    # Setup directories
+    # Setup directories. Because we chdir into a fresh tempdir at __main__,
+    # the whois.py / dns_ipwhois.py libraries' import-time os.makedirs calls
+    # created these dirs in the ORIGINAL cwd, not this tempdir. Recreate them
+    # here so the libraries can write their cache/latency-log files.
     os.makedirs("vm_data/url_queue", exist_ok=True)
     os.makedirs("vm_data/incremental", exist_ok=True)
     os.makedirs("vm_data/master", exist_ok=True)
     os.makedirs("vm_data/checkpoints", exist_ok=True)
+    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("data/checkpoints", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
 
     batch_name = f"batch_{batch_date}.csv"
     url_features_name = f"url_features_{batch_date}.csv"
