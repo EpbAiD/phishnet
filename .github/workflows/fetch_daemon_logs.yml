@@ -1,0 +1,93 @@
+name: Fetch daemon logs
+
+# Read-only. SSHes into the EC2 instance, prints the last N lines of the
+# phishnet-daemon journal, and disconnects. No changes, no writes, no
+# EC2 wake-up beyond starting the instance if it's currently stopped.
+#
+# HOW TO RUN:
+#   Actions tab → "Fetch daemon logs" → Run workflow.
+#   Optional input: how many journal lines to fetch (default 300).
+#
+# COST:
+#   ~10 seconds of a t3.micro. Effectively $0.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lines:
+        description: 'How many journal lines to fetch'
+        required: false
+        default: '300'
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0340d8051273ce3d5
+
+jobs:
+  fetch:
+    name: Fetch daemon logs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 if stopped
+        id: ec2
+        run: |
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+          echo "State: $STATE"
+          if [ "$STATE" = "stopped" ] || [ "$STATE" = "stopping" ]; then
+            if [ "$STATE" = "stopping" ]; then
+              aws ec2 wait instance-stopped --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+            fi
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            sleep 45  # let SSH come up
+          fi
+          IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "IP: $IP"
+          echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Print daemon status + journal
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 3m
+          script: |
+            # No `set -e` — every section should print even if one fails.
+
+            echo "===== systemctl status phishnet-daemon ====="
+            sudo systemctl status phishnet-daemon --no-pager || true
+
+            echo ""
+            echo "===== last ${{ github.event.inputs.lines }} journal lines ====="
+            sudo journalctl -u phishnet-daemon -n ${{ github.event.inputs.lines }} --no-pager || true
+
+            echo ""
+            echo "===== active daemon processes ====="
+            ps -ef | grep -E "phishnet|ec2_daemon" | grep -v grep || echo "  (no phishnet processes running)"
+
+            echo ""
+            echo "===== disk usage ====="
+            df -h / | tail -1
+
+            echo ""
+            echo "===== recent /tmp entries (phishnet extraction scratch dirs) ====="
+            ls -la /tmp/phishnet-extract-* 2>/dev/null || echo "  (no /tmp/phishnet-extract-* — cleanup ran)"

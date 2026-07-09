@@ -1,0 +1,79 @@
+name: Cleanup stuck queue marker
+
+# One-shot workflow. Takes a specific batch_date, deletes the batch's
+# READY_ marker + the two data files (batch_*.csv, url_features_*.csv)
+# from s3://phishnet-data/queue/. Use this when the daemon completed a
+# batch's real work (masters were updated in S3) but died before it
+# could clean up its own marker — leaving the queue looking "stuck".
+#
+# EXAMPLE:
+#   batch_date: 20260709_135317
+#   Deletes:
+#     s3://phishnet-data/queue/READY_20260709_135317.marker
+#     s3://phishnet-data/queue/batch_20260709_135317.csv
+#     s3://phishnet-data/queue/url_features_20260709_135317.csv
+#
+# Safe to run: only deletes S3 objects, does NOT touch masters or models.
+# If the batch_date doesn't exist, nothing happens (aws s3 rm is idempotent).
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_date:
+        description: 'batch_date to clean (e.g. 20260709_135317) — NO underscores/timestamps outside the format'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+
+jobs:
+  cleanup:
+    name: Delete stuck queue marker + batch files
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate input
+        run: |
+          BD='${{ github.event.inputs.batch_date }}'
+          # Must be exactly YYYYMMDD_HHMMSS — 15 chars, digits + one underscore
+          if ! [[ "$BD" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+            echo "❌ batch_date must be in format YYYYMMDD_HHMMSS (e.g. 20260709_135317). Got: '$BD'"
+            exit 1
+          fi
+          echo "✅ Will clean up batch_date=$BD"
+
+      - name: Show what's about to be deleted
+        run: |
+          BD='${{ github.event.inputs.batch_date }}'
+          echo "Objects matching this batch in the queue:"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/queue/" 2>&1 | grep -E "${BD}" || echo "  (nothing matching — nothing to do)"
+
+      - name: Delete the marker + data files
+        run: |
+          BD='${{ github.event.inputs.batch_date }}'
+          # Each aws s3 rm is idempotent — no error if the key doesn't exist.
+          echo "Deleting READY marker..."
+          aws s3 rm "s3://${{ env.S3_BUCKET }}/queue/READY_${BD}.marker" || true
+          echo "Deleting batch CSV..."
+          aws s3 rm "s3://${{ env.S3_BUCKET }}/queue/batch_${BD}.csv" || true
+          echo "Deleting url_features CSV..."
+          aws s3 rm "s3://${{ env.S3_BUCKET }}/queue/url_features_${BD}.csv" || true
+
+      - name: Confirm queue is clean
+        run: |
+          BD='${{ github.event.inputs.batch_date }}'
+          echo "Remaining objects matching this batch (should be none):"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/queue/" 2>&1 | grep -E "${BD}" || echo "  ✅ none — cleanup succeeded"
+          echo ""
+          echo "Full queue listing:"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/queue/" 2>&1 | head -20
