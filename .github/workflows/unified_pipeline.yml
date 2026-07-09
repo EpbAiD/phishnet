@@ -29,7 +29,7 @@ concurrency:
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: phishnet-data
-  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+  EC2_INSTANCE_ID: i-0340d8051273ce3d5
   EC2_HOST: 3.92.88.199
   CONFIG_FILE: .github/pipeline_config.yml
 

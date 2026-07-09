@@ -20,7 +20,7 @@ on:
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: phishnet-data
-  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+  EC2_INSTANCE_ID: i-0340d8051273ce3d5
 
 jobs:
   install:
@@ -128,15 +128,29 @@ jobs:
             cp "$SRC/requirements-ec2.txt"               "$DST/"
 
             echo "=== Ensure Python + venv ==="
-            if ! command -v python3.8 >/dev/null 2>&1; then
-              echo "python3.8 missing — falling back to system python3"
-              PY=python3
-            else
-              PY=python3.8
+            # Prefer the newest Python we can find. AL2023 default is 3.9;
+            # AL2 was 3.7 with 3.8 as extras. Pick the highest available.
+            PY=""
+            for cand in python3.12 python3.11 python3.10 python3.9 python3.8 python3; do
+              if command -v "$cand" >/dev/null 2>&1; then
+                PY="$cand"
+                break
+              fi
+            done
+            if [ -z "$PY" ]; then
+              echo "❌ No python3 interpreter found. Aborting."
+              exit 1
             fi
-            if [ ! -d "$DST/.venv" ]; then
-              $PY -m venv "$DST/.venv"
+            echo "Using interpreter: $PY ($($PY --version 2>&1))"
+            # Ensure venv module is available (AL2023 default AMI ships it)
+            if ! $PY -c 'import venv' >/dev/null 2>&1; then
+              echo "❌ Chosen Python ($PY) lacks the venv module. Install python3-devel? Aborting."
+              exit 1
             fi
+            # Clean the venv so we don't inherit half-installed packages from
+            # a prior failed run.
+            rm -rf "$DST/.venv"
+            $PY -m venv "$DST/.venv"
             "$DST/.venv/bin/pip" install --upgrade pip
             "$DST/.venv/bin/pip" install -r "$DST/requirements-ec2.txt"
 
