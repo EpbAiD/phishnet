@@ -59,7 +59,26 @@ jobs:
           echo "IP: $IP"
           echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
 
-      - name: Copy install payload to EC2 (systemd unit, sudoers, daemon script)
+      - name: Package install payload into a single tarball
+        run: |
+          # appleboy/scp-action's `source:` doesn't expand ** globs and its
+          # multi-line paths are quirky across versions. Simpler and more
+          # reliable: tar everything we need locally, SCP one file, untar
+          # on EC2. Sidesteps every glob issue.
+          mkdir -p _install_payload/scripts _install_payload/src
+          cp scripts/ec2_daemon.py                   _install_payload/scripts/
+          cp scripts/extract_vm_features_aws.py      _install_payload/scripts/
+          cp scripts/phishnet-daemon.service         _install_payload/scripts/
+          cp scripts/phishnet-daemon-sudoers         _install_payload/scripts/
+          cp requirements.txt                        _install_payload/
+          cp -r src/*                                _install_payload/src/
+          tar czf install_payload.tar.gz -C _install_payload .
+          echo "Payload contents:"
+          tar tzf install_payload.tar.gz | head -30
+          echo "..."
+          echo "Payload size: $(du -h install_payload.tar.gz | cut -f1)"
+
+      - name: SCP payload tarball to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
@@ -67,14 +86,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 60s
           command_timeout: 5m
-          source: |
-            scripts/ec2_daemon.py
-            scripts/phishnet-daemon.service
-            scripts/phishnet-daemon-sudoers
-            scripts/extract_vm_features_aws.py
-            src/**
-            requirements.txt
-          target: /home/ec2-user/phishnet-install/
+          source: install_payload.tar.gz
+          target: /home/ec2-user/
 
       - name: Install and enable systemd service
         uses: appleboy/ssh-action@v1.0.3
@@ -94,12 +107,21 @@ jobs:
             SRC=/home/ec2-user/phishnet-install
             DST=/home/ec2-user/phishnet
 
+            echo "=== Unpack payload tarball ==="
+            rm -rf "$SRC"
+            mkdir -p "$SRC"
+            tar xzf /home/ec2-user/install_payload.tar.gz -C "$SRC"
+            rm -f /home/ec2-user/install_payload.tar.gz
+            echo "Unpacked payload:"
+            ls -la "$SRC"
+            ls -la "$SRC/scripts"
+
             echo "=== Sync source to $DST ==="
             mkdir -p "$DST/scripts" "$DST/src"
-            cp "$SRC/scripts/ec2_daemon.py"            "$DST/scripts/"
+            cp "$SRC/scripts/ec2_daemon.py"              "$DST/scripts/"
             cp "$SRC/scripts/extract_vm_features_aws.py" "$DST/scripts/"
             cp -r "$SRC/src/"* "$DST/src/"
-            cp "$SRC/requirements.txt"                 "$DST/"
+            cp "$SRC/requirements.txt"                   "$DST/"
 
             echo "=== Ensure Python + venv ==="
             if ! command -v python3.8 >/dev/null 2>&1; then
