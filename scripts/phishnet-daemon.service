@@ -1,0 +1,47 @@
+# phishnet-daemon systemd unit — installed on the EC2 instance by
+# .github/workflows/setup_ec2_daemon.yml.
+#
+# What it does:
+#   * Starts on boot (see [Install] WantedBy).
+#   * Runs scripts/ec2_daemon.py as ec2-user.
+#   * Auto-restarts on crash (Restart=always) — so a transient bug in one
+#     batch doesn't take the whole system down.
+#   * Reads S3 creds + region from the environment file at /etc/phishnet.env,
+#     which the install workflow populates from GitHub secrets.
+
+[Unit]
+Description=PhishNet EC2 extraction daemon (S3 queue consumer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/phishnet
+
+# AWS creds + region come from here; the install workflow writes it and
+# `chmod 0640` restricts it. Keep this file's contents out of git.
+EnvironmentFile=/etc/phishnet.env
+
+# Use the venv the install workflow creates.
+ExecStart=/home/ec2-user/phishnet/.venv/bin/python -u scripts/ec2_daemon.py
+
+# Restart policy: crash → wait 30s → try again. Prevents a hot-loop if
+# the code is genuinely broken while still recovering from transient issues.
+Restart=always
+RestartSec=30s
+
+# Send SIGTERM (daemon handles it and finishes the current batch) before
+# escalating to SIGKILL. Give it 5 min because a batch may be mid-extraction.
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+# All stdout/stderr goes to the journal. `journalctl -u phishnet-daemon -f`
+# to tail it live from an SSH session; the daemon also writes structured
+# status JSON to S3 so you rarely need to SSH.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=phishnet-daemon
+
+[Install]
+WantedBy=multi-user.target

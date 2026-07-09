@@ -1,0 +1,24 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-queue-files-14d",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "queue/"},
+      "Expiration": {"Days": 14},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    },
+    {
+      "ID": "expire-pipeline-state-7d",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "pipeline_state/"},
+      "Expiration": {"Days": 7},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1}
+    },
+    {
+      "ID": "expire-old-versions-30d",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "master/"},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 30}
+    }
+  ]
+}

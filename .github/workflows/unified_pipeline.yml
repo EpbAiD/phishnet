@@ -244,152 +244,88 @@ jobs:
           echo "Extracting URL features..."
           python3 scripts/extract_url_features.py ${{ env.batch_file }} data/processed/url_features_${{ env.batch_date }}.csv
 
-      - name: Upload batch to S3 for EC2 processing
+      - name: Publish batch to the S3 queue (daemon picks it up)
         run: |
-          echo "Uploading batch and URL features to S3..."
-          aws s3 cp ${{ env.batch_file }} s3://${{ env.S3_BUCKET }}/queue/${{ env.batch_name }}
-          aws s3 cp data/processed/url_features_${{ env.batch_date }}.csv s3://${{ env.S3_BUCKET }}/queue/url_features_${{ env.batch_date }}.csv
+          # Producer/consumer via S3. GitHub Actions is the producer; the
+          # phishnet-daemon systemd unit on EC2 is the consumer. No SSH lifeline.
+          # Order matters: the READY_ marker MUST be written last so the daemon
+          # never sees a marker before both data files exist.
+          BD="${{ env.batch_date }}"
+          echo "Uploading batch data files first..."
+          aws s3 cp "${{ env.batch_file }}" "s3://${{ env.S3_BUCKET }}/queue/${{ env.batch_name }}"
+          aws s3 cp "data/processed/url_features_${BD}.csv" "s3://${{ env.S3_BUCKET }}/queue/url_features_${BD}.csv"
+          echo "Now writing READY marker so the daemon can pick this batch up..."
+          echo "{\"batch_date\": \"${BD}\", \"queued_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > /tmp/ready.json
+          aws s3 cp /tmp/ready.json "s3://${{ env.S3_BUCKET }}/queue/READY_${BD}.marker"
 
-      - name: Start EC2 instance
+      - name: Wake EC2 if it's stopped
         id: ec2
         run: |
-          INSTANCE_STATE=$(aws ec2 describe-instances \
+          # The daemon shuts EC2 down when idle. Start it if needed; the
+          # daemon (systemd) starts on boot and will immediately see the marker.
+          STATE=$(aws ec2 describe-instances \
             --instance-ids ${{ env.EC2_INSTANCE_ID }} \
             --query 'Reservations[0].Instances[0].State.Name' \
             --output text)
+          echo "EC2 instance state: $STATE"
 
-          echo "EC2 instance state: $INSTANCE_STATE"
-
-          if [ "$INSTANCE_STATE" = "stopped" ]; then
-            echo "Starting EC2 instance..."
+          if [ "$STATE" = "stopped" ] || [ "$STATE" = "stopping" ]; then
+            # If it's mid-stop, wait for it to reach "stopped" before starting.
+            if [ "$STATE" = "stopping" ]; then
+              aws ec2 wait instance-stopped --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+            fi
+            echo "Starting EC2..."
             aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
             aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
-            echo "Waiting for instance to initialize..."
-            sleep 60
+            echo "EC2 running; daemon will start via systemd within seconds."
           else
-            echo "EC2 instance already running"
+            echo "EC2 already running."
           fi
 
-          # Get current public IP (may change after restart)
-          EC2_IP=$(aws ec2 describe-instances \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text)
-          echo "EC2 Public IP: $EC2_IP"
-          echo "ec2_ip=$EC2_IP" >> $GITHUB_OUTPUT
-          echo "ec2_ip=$EC2_IP" >> $GITHUB_ENV
-
-      - name: Upload VM script to S3
+      - name: Wait for daemon to finish the batch
         run: |
-          echo "Uploading updated VM script..."
-          aws s3 cp scripts/extract_vm_features_aws.py s3://${{ env.S3_BUCKET }}/scripts/
-
-      - name: EC2 health check (DNS + disk + Python deps)
-        id: ec2_health
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ steps.ec2.outputs.ec2_ip }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 120s
-          command_timeout: 5m
-          script: |
-            # NOTE: no `set -e` here. When the disk is 100% full, even trivial
-            # commands (rm's tmp file, echo to disk-backed pipe) can fail, and
-            # we want cleanup to try every step regardless of prior failures.
-            set -u
-
-            # ---- Aggressive cleanup FIRST — do this before anything else so
-            #      the rest of the checks have room to run. Every step is
-            #      guarded with `|| true` so one failure doesn't abort the rest.
-            # Biggest known offenders on this box:
-            #   • WHOIS/DNS local cache CSVs (grow every extraction, never cleaned;
-            #     the S3 masters are the durable copy — safe to nuke locally)
-            #   • Old timestamped checkpoints and batch files under vm_data/
-            #   • pip cache under ~/.cache/pip
-            rm -f  /home/ec2-user/phishnet/data/processed/whois_results.csv        2>/dev/null || true
-            rm -f  /home/ec2-user/phishnet/data/processed/dns_ipwhois_results.csv  2>/dev/null || true
-            rm -f  /home/ec2-user/phishnet/data/processed/*.csv                    2>/dev/null || true
-            rm -rf /home/ec2-user/phishnet/vm_data/checkpoints/*                   2>/dev/null || true
-            rm -rf /home/ec2-user/phishnet/vm_data/master/*                        2>/dev/null || true
-            rm -rf /home/ec2-user/phishnet/vm_data/url_queue/*                     2>/dev/null || true
-            rm -rf /home/ec2-user/phishnet/vm_data/incremental/*                   2>/dev/null || true
-            rm -rf /home/ec2-user/.cache/pip                                       2>/dev/null || true
-
-            # Systemd journal was the other big offender (833 MB in the last run).
-            # Vacuum-size is fast (unlike --vacuum-time) and caps it at 100 MB.
-            sudo journalctl --vacuum-size=100M 2>/dev/null || true
-            sudo rm -f /var/log/messages-* /var/log/wtmp-* /var/log/*.gz 2>/dev/null || true
-            sudo rm -f /var/log/cloud-init.log /var/log/cloud-init-output.log 2>/dev/null || true
-
-            # ---- Now the real health checks ----
-            echo "Testing DNS resolution on EC2..."
-            timeout 10 getent hosts google.com     > /dev/null || { echo "❌ DNS BROKEN on EC2"; exit 42; }
-            timeout 10 getent hosts phishtank.org  > /dev/null || { echo "❌ DNS partial fail"; exit 42; }
-            timeout 10 python3.8 -c "import socket; socket.gethostbyname('cloudflare.com')" || { echo "❌ Python DNS broken"; exit 42; }
-            echo "✅ DNS OK"
-
-            python3.8 -c "import boto3, whois, dns.resolver, pandas" || { echo "❌ Python deps broken"; exit 43; }
-            echo "✅ Python deps OK"
-
-            echo ""
-            echo "Disk usage after cleanup:"
-            df -h / | tail -1
-
-            AVAIL_MB=$(df -m / | tail -1 | awk '{print $4}')
-            echo "Available: ${AVAIL_MB} MB"
-            if [ "$AVAIL_MB" -lt 500 ]; then
-              echo "❌ DISK STILL FULL after cleanup (${AVAIL_MB} MB free). Top offenders:"
-              du -sh /home/ec2-user/* 2>/dev/null | sort -rh | head -10 || true
-              du -sh /var/log/* 2>/dev/null | sort -rh | head -10 || true
-              exit 44
+          # Poll S3 for the daemon's done.json for this batch. Fail loudly if
+          # it never appears within a generous ceiling. If GH times out first
+          # the daemon keeps working — the next run's verify still catches up.
+          BD="${{ env.batch_date }}"
+          KEY="pipeline_state/${BD}/done.json"
+          MAX_WAIT_MIN=300      # 5h ceiling — daemon can take longer, we just stop watching
+          POLL_SEC=60
+          START=$(date +%s)
+          while : ; do
+            if aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key "$KEY" >/dev/null 2>&1 ; then
+              echo "Daemon signaled done for batch ${BD}. Fetching done.json..."
+              aws s3 cp "s3://${{ env.S3_BUCKET }}/$KEY" /tmp/done.json
+              cat /tmp/done.json
+              if grep -q '"ok": true' /tmp/done.json ; then
+                echo "✅ Batch reported ok."
+                exit 0
+              else
+                echo "❌ Batch reported failure."
+                exit 1
+              fi
             fi
-            echo "✅ Disk OK (${AVAIL_MB} MB free)"
+            NOW=$(date +%s)
+            ELAPSED_MIN=$(( (NOW - START) / 60 ))
+            if [ "$ELAPSED_MIN" -ge "$MAX_WAIT_MIN" ]; then
+              echo "⏱️  Waited ${ELAPSED_MIN} min without a done.json — GH job timing out."
+              echo "Daemon may still be processing on EC2; next run's verify will confirm."
+              # NOTE: not a hard failure — the daemon will finish and update the
+              # masters. The hourly health monitor picks up master-age regressions.
+              exit 0
+            fi
+            echo "  ...still waiting (${ELAPSED_MIN}/${MAX_WAIT_MIN} min). Sleeping ${POLL_SEC}s."
+            sleep "$POLL_SEC"
+          done
 
-      - name: Reboot EC2 if health check failed
-        if: failure() && steps.ec2_health.conclusion == 'failure'
+      - name: Verify masters were freshly updated in S3
         run: |
-          echo "⚠️ EC2 health check failed — rebooting the instance to restore DNS/state."
-          aws ec2 reboot-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
-          echo "Reboot requested. Waiting 90s for instance to come back..."
-          sleep 90
-          # Get the (possibly new) public IP after reboot
-          EC2_IP=$(aws ec2 describe-instances \
-            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text)
-          echo "EC2 Public IP after reboot: $EC2_IP"
-          echo "Reboot done — the next scheduled run will retry extraction."
-          # Fail this run explicitly so we don't mask the broken state as success
-          exit 1
-
-      - name: EC2 Processing (DNS/WHOIS extraction + accumulation)
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          BATCH_DATE: ${{ env.batch_date }}
-        with:
-          host: ${{ steps.ec2.outputs.ec2_ip }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 120s
-          command_timeout: 360m
-          envs: BATCH_DATE
-          script: |
-            # Fail loudly on ANY error — recent runs "succeeded" while doing nothing
-            # because a script crash was swallowed and the trailing echo returned 0.
-            set -euo pipefail
-            cd /home/ec2-user/phishnet
-            aws s3 cp s3://${{ env.S3_BUCKET }}/scripts/extract_vm_features_aws.py scripts/
-            python3.8 scripts/extract_vm_features_aws.py $BATCH_DATE
-            echo "✅ EC2 processing complete - master dataset updated in S3"
-
-      - name: Verify extraction actually happened
-        run: |
-          # Detect silent no-op runs: the extraction step "succeeded" but nothing
-          # new was extracted. Confirm today's DNS/WHOIS master timestamps are recent.
+          # Defense-in-depth: even if done.json said ok, check the master
+          # objects themselves were touched recently. Catches a bug where the
+          # daemon writes done.json but fails silently at the accumulation step.
           echo "Verifying S3 masters were updated recently..."
-          THRESHOLD_MIN=180  # accept anything updated in the last 3 hours
-          for master in dns_features_master.csv whois_features_master.csv; do
+          THRESHOLD_MIN=360
+          for master in dns_features_master.csv whois_features_master.csv url_features_master.csv; do
             LAST_MODIFIED=$(aws s3api head-object \
               --bucket ${{ env.S3_BUCKET }} \
               --key "master/${master}" \
@@ -399,17 +335,16 @@ jobs:
             AGE_MIN=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
             echo "  ${master}: last modified ${AGE_MIN} min ago"
             if [ "$AGE_MIN" -gt "$THRESHOLD_MIN" ]; then
-              echo "❌ ${master} not updated in the last ${THRESHOLD_MIN} min — extraction likely silently failed."
+              echo "❌ ${master} not updated in the last ${THRESHOLD_MIN} min — accumulation likely failed."
               exit 1
             fi
           done
-          echo "✅ Both masters updated recently."
+          echo "✅ Masters updated recently."
 
-      - name: Stop EC2 instance
-        if: always()
-        run: |
-          echo "Stopping EC2 instance to save costs..."
-          aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+      # Note: we no longer stop EC2 here. The daemon does that itself after
+      # IDLE_SHUTDOWN_MIN minutes of empty queue. This means EC2 stays up
+      # briefly across back-to-back runs, which is cheaper than repeated
+      # boot cycles.
 
       - name: Download master dataset from S3 for training
         run: |

@@ -1,0 +1,43 @@
+name: One-shot — Apply S3 lifecycle policy
+
+# Applies the lifecycle rules in scripts/s3-lifecycle-policy.json to
+# s3://phishnet-data. Idempotent — safe to run multiple times.
+#
+# Rules:
+#   - queue/*             expire 14 days after object creation
+#   - pipeline_state/*    expire 7 days after object creation
+#   - master/* (versions) expire noncurrent versions after 30 days
+#
+# Cost impact: prevents old queue/state files from accumulating, and prevents
+# S3 versioning of master/* from ballooning storage if we ever rewrite masters.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Apply lifecycle configuration
+        run: |
+          aws s3api put-bucket-lifecycle-configuration \
+            --bucket ${{ env.S3_BUCKET }} \
+            --lifecycle-configuration file://scripts/s3-lifecycle-policy.json
+          echo "Applied. Verifying..."
+          aws s3api get-bucket-lifecycle-configuration --bucket ${{ env.S3_BUCKET }} \
+            | python3 -m json.tool

@@ -1,0 +1,8 @@
+# Placed at /etc/sudoers.d/phishnet-daemon (mode 0440) by the install workflow.
+# Lets ec2-user (the daemon's account) run only the specific shutdown command
+# without a password — nothing else.
+#
+# We restrict to `-h now` so the daemon literally cannot escalate to any other
+# sudo operation.
+
+ec2-user ALL=(root) NOPASSWD: /sbin/shutdown -h now

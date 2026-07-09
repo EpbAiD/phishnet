@@ -1,0 +1,159 @@
+name: One-shot — Install phishnet-daemon on EC2
+
+# WHAT THIS DOES:
+#   - Starts the EC2 instance (if stopped).
+#   - SSHes in once, drops the systemd unit + sudoers file + code, creates a
+#     venv with the deps, enables and starts the daemon.
+#   - After it succeeds, the daemon self-manages: starts on boot, polls S3,
+#     stops the instance when idle.
+#
+# WHEN TO RUN:
+#   - Once, after this PR merges, to install the daemon on the EC2 instance.
+#   - Again if the daemon or systemd unit changes materially. It's idempotent.
+#
+# HOW TO RUN:
+#   Actions tab → "One-shot — Install phishnet-daemon on EC2" → Run workflow.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+
+jobs:
+  install:
+    name: Install daemon on EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 if stopped
+        id: ec2
+        run: |
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+          echo "State: $STATE"
+          if [ "$STATE" = "stopped" ]; then
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            sleep 45  # let SSH come up
+          fi
+          IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "IP: $IP"
+          echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Copy install payload to EC2 (systemd unit, sudoers, daemon script)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 5m
+          source: |
+            scripts/ec2_daemon.py
+            scripts/phishnet-daemon.service
+            scripts/phishnet-daemon-sudoers
+            scripts/extract_vm_features_aws.py
+            src/**
+            requirements.txt
+          target: /home/ec2-user/phishnet-install/
+
+      - name: Install and enable systemd service
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          AWS_ACCESS_KEY_ID_SECRET: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 10m
+          envs: AWS_ACCESS_KEY_ID_SECRET,AWS_SECRET_ACCESS_KEY_SECRET
+          script: |
+            set -euo pipefail
+
+            SRC=/home/ec2-user/phishnet-install
+            DST=/home/ec2-user/phishnet
+
+            echo "=== Sync source to $DST ==="
+            mkdir -p "$DST/scripts" "$DST/src"
+            cp "$SRC/scripts/ec2_daemon.py"            "$DST/scripts/"
+            cp "$SRC/scripts/extract_vm_features_aws.py" "$DST/scripts/"
+            cp -r "$SRC/src/"* "$DST/src/"
+            cp "$SRC/requirements.txt"                 "$DST/"
+
+            echo "=== Ensure Python + venv ==="
+            if ! command -v python3.8 >/dev/null 2>&1; then
+              echo "python3.8 missing — falling back to system python3"
+              PY=python3
+            else
+              PY=python3.8
+            fi
+            if [ ! -d "$DST/.venv" ]; then
+              $PY -m venv "$DST/.venv"
+            fi
+            "$DST/.venv/bin/pip" install --upgrade pip
+            "$DST/.venv/bin/pip" install -r "$DST/requirements.txt"
+
+            echo "=== Write /etc/phishnet.env (AWS creds + region) ==="
+            sudo bash -c "cat > /etc/phishnet.env" <<EOF
+            AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_SECRET
+            AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_SECRET
+            AWS_REGION=us-east-1
+            S3_BUCKET=phishnet-data
+            PHISHNET_POLL_INTERVAL_SEC=60
+            PHISHNET_IDLE_SHUTDOWN_MIN=10
+            EOF
+            sudo chmod 0640 /etc/phishnet.env
+            sudo chown root:root /etc/phishnet.env
+
+            echo "=== Install systemd unit ==="
+            sudo cp "$SRC/scripts/phishnet-daemon.service" /etc/systemd/system/
+            sudo chmod 0644 /etc/systemd/system/phishnet-daemon.service
+            sudo systemctl daemon-reload
+
+            echo "=== Install sudoers rule for self-shutdown ==="
+            sudo cp "$SRC/scripts/phishnet-daemon-sudoers" /etc/sudoers.d/phishnet-daemon
+            sudo chmod 0440 /etc/sudoers.d/phishnet-daemon
+            sudo chown root:root /etc/sudoers.d/phishnet-daemon
+
+            echo "=== Enable + (re)start daemon ==="
+            sudo systemctl enable phishnet-daemon
+            sudo systemctl restart phishnet-daemon
+            sleep 3
+            sudo systemctl status phishnet-daemon --no-pager | head -25 || true
+            echo ""
+            echo "=== Last 20 journal lines ==="
+            sudo journalctl -u phishnet-daemon -n 20 --no-pager || true
+
+            echo "=== Cleanup install payload ==="
+            rm -rf "$SRC"
+
+      - name: Note
+        run: |
+          echo "Daemon installed. It will:"
+          echo "  - poll s3://${{ env.S3_BUCKET }}/queue/READY_*.marker every 60s"
+          echo "  - process each batch (extract features, append to masters)"
+          echo "  - after 10 min of empty queue, shutdown -h now"
+          echo ""
+          echo "To trigger work: run the Unified ML Pipeline; it writes a batch"
+          echo "to the queue and starts EC2 if stopped."
