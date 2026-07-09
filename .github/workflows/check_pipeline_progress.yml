@@ -1,0 +1,189 @@
+name: Check pipeline progress
+
+# Read-only status report. Answers three questions:
+#   1. What's in the S3 queue right now, and how old is it?
+#   2. What batches has the daemon processed recently, and did they succeed?
+#   3. When was each master last updated? (URL / DNS / WHOIS)
+#
+# No SSH, no EC2 wake, no cost. Just S3 list/head calls. Safe to run any
+# number of times.
+#
+# HOW TO RUN:
+#   Actions tab → "Check pipeline progress" → Run workflow.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+
+jobs:
+  check:
+    name: Report pipeline status
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Report
+        run: |
+          # No `set -e` — we want every section to print, even if S3 is
+          # missing an object we ask for.
+
+          hr() { printf '\n===== %s =====\n' "$1"; }
+          age_min() {
+              # Given an ISO8601 timestamp, print age in minutes.
+              local lm="$1"
+              local last=$(date -d "$lm" +%s 2>/dev/null || echo 0)
+              local now=$(date -u +%s)
+              if [ "$last" -eq 0 ]; then
+                  echo "?"
+              else
+                  echo $(( (now - last) / 60 ))
+              fi
+          }
+
+          hr "1. Queue: batches waiting for the daemon"
+          # Anything under queue/READY_*.marker is a batch the daemon hasn't
+          # picked up yet. Anything under queue/FAILED_*.marker was picked up
+          # but failed accumulation.
+          echo "Pending (READY_):"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/queue/" 2>/dev/null | grep 'READY_' || echo "  (none — queue empty)"
+          echo ""
+          echo "Failed (FAILED_) — kept for inspection, retry manually:"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/queue/" 2>/dev/null | grep 'FAILED_' || echo "  (none)"
+
+          hr "2. Recently completed batches (last 10)"
+          # Each finished batch has pipeline_state/<TS>/done.json. Grab the
+          # most recent 10, print ok/failure summary.
+          echo "State prefix listing:"
+          aws s3 ls "s3://${{ env.S3_BUCKET }}/pipeline_state/" 2>/dev/null | head -12
+          echo ""
+
+          echo "Last 10 done.json markers:"
+          LATEST=$(aws s3api list-objects-v2 \
+            --bucket "${{ env.S3_BUCKET }}" \
+            --prefix "pipeline_state/" \
+            --query "reverse(sort_by(Contents, &LastModified))[?ends_with(Key, 'done.json')].[LastModified, Key]" \
+            --output text 2>/dev/null | head -10)
+          if [ -z "$LATEST" ]; then
+              echo "  (no done markers yet)"
+          else
+              echo "$LATEST" | while read lm key; do
+                  ok=$(aws s3 cp "s3://${{ env.S3_BUCKET }}/$key" - 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('ok'))" 2>/dev/null || echo "?")
+                  am=$(age_min "$lm")
+                  echo "  ${am} min ago  ok=${ok}  ${key}"
+              done
+          fi
+
+          hr "3. Currently-in-flight batch (status.json without matching done.json)"
+          # A batch has status.json written on start; done.json is only written
+          # at the end. So a status.json without done.json means the daemon is
+          # currently working on that batch.
+          IN_FLIGHT=$(aws s3api list-objects-v2 \
+            --bucket "${{ env.S3_BUCKET }}" \
+            --prefix "pipeline_state/" \
+            --query "reverse(sort_by(Contents, &LastModified))[?ends_with(Key, 'status.json')].[Key,LastModified]" \
+            --output text 2>/dev/null | head -20)
+          if [ -z "$IN_FLIGHT" ]; then
+              echo "  (no status files at all)"
+          else
+              echo "$IN_FLIGHT" | while read stkey lm; do
+                  batch=${stkey#pipeline_state/}
+                  batch=${batch%/status.json}
+                  # is there a matching done.json?
+                  if aws s3api head-object --bucket "${{ env.S3_BUCKET }}" \
+                        --key "pipeline_state/${batch}/done.json" >/dev/null 2>&1 ; then
+                      : # skip — already finished, shows up in section 2
+                  else
+                      am=$(age_min "$lm")
+                      echo "  batch=${batch}  started ${am} min ago"
+                      aws s3 cp "s3://${{ env.S3_BUCKET }}/$stkey" - 2>/dev/null | python3 -m json.tool 2>/dev/null | sed 's/^/    /'
+                  fi
+              done
+              # Print a friendly message if no unmatched status files were shown
+              INFLIGHT_COUNT=$(echo "$IN_FLIGHT" | while read stkey lm; do
+                  batch=${stkey#pipeline_state/}
+                  batch=${batch%/status.json}
+                  if ! aws s3api head-object --bucket "${{ env.S3_BUCKET }}" \
+                        --key "pipeline_state/${batch}/done.json" >/dev/null 2>&1 ; then
+                      echo x
+                  fi
+              done | wc -l)
+              if [ "$INFLIGHT_COUNT" = "0" ]; then
+                  echo "  (all status files have matching done.json — nothing currently in-flight)"
+              fi
+          fi
+
+          hr "4. Master datasets: last-modified in S3"
+          for m in url_features_master.csv dns_features_master.csv whois_features_master.csv phishing_features_master.csv; do
+              lm=$(aws s3api head-object --bucket "${{ env.S3_BUCKET }}" \
+                   --key "master/${m}" --query LastModified --output text 2>/dev/null || echo "")
+              sz=$(aws s3api head-object --bucket "${{ env.S3_BUCKET }}" \
+                   --key "master/${m}" --query ContentLength --output text 2>/dev/null || echo "?")
+              if [ -z "$lm" ]; then
+                  printf "  %-32s  MISSING from S3\n" "$m"
+              else
+                  am=$(age_min "$lm")
+                  # Show size in MB
+                  if [ "$sz" != "?" ]; then
+                      sz_mb=$(( sz / 1024 / 1024 ))
+                      printf "  %-32s  %s min ago  (%sM)\n" "$m" "$am" "$sz_mb"
+                  else
+                      printf "  %-32s  %s min ago\n" "$m" "$am"
+                  fi
+              fi
+          done
+
+          hr "5. Deployed model (as of the last successful retrain)"
+          # Write the reader script to a file to avoid multiline-heredoc-in-YAML
+          # parsing issues. Read the metadata JSON, print a compact summary.
+          cat > /tmp/deployed_report.py << 'PY'
+          import json, sys
+          from datetime import datetime, timezone
+
+          try:
+              d = json.load(sys.stdin)
+              lt = d.get('last_trained', '?')
+              print(f"  last_trained: {lt}")
+              if lt != '?':
+                  try:
+                      dt = datetime.fromisoformat(lt)
+                      if dt.tzinfo is None:
+                          dt = dt.replace(tzinfo=timezone.utc)
+                      age_h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+                      print(f'  age: {age_h:.1f} hours')
+                  except Exception as e:
+                      print(f'  age: (parse error: {e})')
+              ens = d.get('ensemble', {}) or {}
+              if ens:
+                  print(f"  models: {ens.get('models')}")
+                  cv = ens.get('cv_performance', {}) or {}
+                  if cv:
+                      def _f(x):
+                          try: return f"{float(x):.4f}"
+                          except Exception: return "?"
+                      print(f"  CV AUC - URL: {_f(cv.get('url_roc_auc'))}  DNS: {_f(cv.get('dns_roc_auc'))}  WHOIS: {_f(cv.get('whois_roc_auc'))}")
+              gt = d.get('golden_test', {}) or {}
+              if gt:
+                  print(f"  golden safe-URL acc: {gt.get('safe_url_accuracy')}  FPR: {gt.get('false_positive_rate')}")
+          except Exception as e:
+              print(f'  (could not read deployed_metadata.json: {e})')
+          PY
+          aws s3 cp "s3://${{ env.S3_BUCKET }}/models/deployed_metadata.json" - 2>/dev/null \
+              | python3 /tmp/deployed_report.py
+
+          hr "Interpreting this"
+          echo "  Queue empty + no in-flight + masters recent  →  system is idle, healthy."
+          echo "  Queue has READY_ + no in-flight              →  EC2 asleep; will wake on next pipeline run."
+          echo "  In-flight batch present                      →  daemon is currently working on it."
+          echo "  FAILED_ markers                              →  a batch broke; check pipeline_state/<batch>/done.json for details."
+          echo ""
+          echo "Done."
