@@ -70,7 +70,11 @@ jobs:
           cp scripts/extract_vm_features_aws.py      _install_payload/scripts/
           cp scripts/phishnet-daemon.service         _install_payload/scripts/
           cp scripts/phishnet-daemon-sudoers         _install_payload/scripts/
-          cp requirements.txt                        _install_payload/
+          # Slim EC2-only requirements — the full requirements.txt has ML
+          # packages (scikit-learn, catboost, ...) that don't install on
+          # Python 3.8 which is what the EC2 AMI ships. Extraction doesn't
+          # need those anyway.
+          cp requirements-ec2.txt                    _install_payload/
           cp -r src/*                                _install_payload/src/
           tar czf install_payload.tar.gz -C _install_payload .
           echo "Payload contents:"
@@ -121,7 +125,7 @@ jobs:
             cp "$SRC/scripts/ec2_daemon.py"              "$DST/scripts/"
             cp "$SRC/scripts/extract_vm_features_aws.py" "$DST/scripts/"
             cp -r "$SRC/src/"* "$DST/src/"
-            cp "$SRC/requirements.txt"                   "$DST/"
+            cp "$SRC/requirements-ec2.txt"               "$DST/"
 
             echo "=== Ensure Python + venv ==="
             if ! command -v python3.8 >/dev/null 2>&1; then
@@ -134,7 +138,7 @@ jobs:
               $PY -m venv "$DST/.venv"
             fi
             "$DST/.venv/bin/pip" install --upgrade pip
-            "$DST/.venv/bin/pip" install -r "$DST/requirements.txt"
+            "$DST/.venv/bin/pip" install -r "$DST/requirements-ec2.txt"
 
             echo "=== Write /etc/phishnet.env (AWS creds + region) ==="
             sudo bash -c "cat > /etc/phishnet.env" <<EOF

@@ -1,0 +1,23 @@
+# Minimal deps for the EC2 daemon + extraction script.
+#
+# Do NOT put the full ML stack (catboost/xgboost/lightgbm/scikit-learn/shap)
+# here. Those are for training, which runs on GitHub Actions runners with a
+# newer Python. The EC2 instance runs Python 3.8, which is incompatible with
+# scikit-learn>=1.4 and other recent ML wheels.
+#
+# The daemon and extract_vm_features_aws.py only need:
+#   - boto3           (S3 + EC2 shutdown)
+#   - pandas          (CSV I/O and dedup)
+#   - python-whois    (WHOIS lookups)
+#   - dnspython       (DNS record queries)
+#   - ipwhois         (ASN/CIDR lookups)
+#   - tldextract      (domain parsing used by feature extractors)
+#   - requests        (transitive: urllib3 etc; pinned for stable behavior)
+
+boto3==1.34.0
+pandas==2.0.3
+python-whois==0.8.0
+dnspython==2.4.2
+ipwhois==1.2.0
+tldextract==5.1.1
+requests==2.31.0
