@@ -1,15 +1,21 @@
 name: Fetch daemon logs
 
-# Read-only. SSHes into the EC2 instance, prints the last N lines of the
-# phishnet-daemon journal, and disconnects. No changes, no writes, no
-# EC2 wake-up beyond starting the instance if it's currently stopped.
+# Read-only. SSHes into the EC2 instance, captures the daemon journal
+# (which contains phishing URL strings that some antivirus/paste-scanners
+# false-positive on when pasted anywhere), uploads the full log as an
+# S3 object under logs/, prints only a summary to the workflow console,
+# and disconnects.
+#
+# The full log lands at:
+#   s3://phishnet-data/logs/daemon-<batch-timestamp>-<runid>.txt
+# and also gets attached as a GitHub Actions artifact for local download.
 #
 # HOW TO RUN:
 #   Actions tab → "Fetch daemon logs" → Run workflow.
 #   Optional input: how many journal lines to fetch (default 300).
 #
 # COST:
-#   ~10 seconds of a t3.micro. Effectively $0.
+#   ~10 seconds of a t3.micro + one S3 PUT. Effectively $0.
 
 on:
   workflow_dispatch:
@@ -62,7 +68,7 @@ jobs:
           echo "IP: $IP"
           echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
 
-      - name: Print daemon status + journal
+      - name: Build the full log bundle on EC2 into /tmp/daemon-log.txt
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
@@ -71,23 +77,82 @@ jobs:
           timeout: 60s
           command_timeout: 3m
           script: |
-            # No `set -e` — every section should print even if one fails.
+            # Write the bundle to a file locally, then upload to S3 in the
+            # next step of the workflow (the runner has AWS creds, EC2 does
+            # too via env, but keeping the upload on the runner is simplest).
+            OUT=/tmp/daemon-log.txt
+            {
+              echo "===== systemctl status phishnet-daemon ====="
+              sudo systemctl status phishnet-daemon --no-pager || true
+              echo ""
+              echo "===== last ${{ github.event.inputs.lines }} journal lines ====="
+              sudo journalctl -u phishnet-daemon -n ${{ github.event.inputs.lines }} --no-pager || true
+              echo ""
+              echo "===== active daemon processes ====="
+              ps -ef | grep -E "phishnet|ec2_daemon" | grep -v grep || echo "  (no phishnet processes running)"
+              echo ""
+              echo "===== disk usage ====="
+              df -h / | tail -1
+              echo ""
+              echo "===== recent /tmp entries (phishnet extraction scratch dirs) ====="
+              ls -la /tmp/phishnet-extract-* 2>/dev/null || echo "  (no /tmp/phishnet-extract-* — cleanup ran)"
+              echo ""
+              echo "===== Recent kernel messages (OOM kills, if any) ====="
+              sudo dmesg -T 2>/dev/null | tail -50 || true
+            } > "$OUT" 2>&1
 
-            echo "===== systemctl status phishnet-daemon ====="
-            sudo systemctl status phishnet-daemon --no-pager || true
+            echo "Bundle built:"
+            wc -l "$OUT"
+            ls -la "$OUT"
 
-            echo ""
-            echo "===== last ${{ github.event.inputs.lines }} journal lines ====="
-            sudo journalctl -u phishnet-daemon -n ${{ github.event.inputs.lines }} --no-pager || true
+      - name: SCP daemon log back to runner
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 3m
+          source: /tmp/daemon-log.txt
+          target: ./daemon-log-artifact/
 
-            echo ""
-            echo "===== active daemon processes ====="
-            ps -ef | grep -E "phishnet|ec2_daemon" | grep -v grep || echo "  (no phishnet processes running)"
+      - name: Upload log to S3 for offline inspection
+        run: |
+          # File pulled back from EC2 via SCP lands here.
+          LOCAL=./daemon-log-artifact/tmp/daemon-log.txt
+          if [ ! -f "$LOCAL" ]; then
+            echo "❌ Expected $LOCAL not found after SCP — SCP may have failed."
+            ls -la ./daemon-log-artifact/ 2>/dev/null || true
+            exit 1
+          fi
+          STAMP=$(date -u +%Y%m%d_%H%M%S)
+          S3KEY="logs/daemon-${STAMP}-run${{ github.run_id }}.txt"
+          aws s3 cp "$LOCAL" "s3://${{ env.S3_BUCKET }}/${S3KEY}"
+          echo ""
+          echo "Full log uploaded to:"
+          echo "  s3://${{ env.S3_BUCKET }}/${S3KEY}"
+          echo "It will be readable directly from the AWS CLI or Claude assistant."
 
-            echo ""
-            echo "===== disk usage ====="
-            df -h / | tail -1
+      - name: Print short summary to the workflow console
+        run: |
+          # Show only head + tail so the console is useful, but avoid pasting
+          # phishing-URL strings (which trip some Mac paste scanners).
+          LOCAL=./daemon-log-artifact/tmp/daemon-log.txt
+          echo "===== FIRST 40 LINES ====="
+          head -40 "$LOCAL" || true
+          echo ""
+          echo "===== LAST 60 LINES ====="
+          tail -60 "$LOCAL" || true
+          echo ""
+          echo "===== NOTES ====="
+          echo "Full log (~$(wc -l < "$LOCAL") lines) is in the S3 object printed above"
+          echo "and also attached as an artifact on this workflow run."
 
-            echo ""
-            echo "===== recent /tmp entries (phishnet extraction scratch dirs) ====="
-            ls -la /tmp/phishnet-extract-* 2>/dev/null || echo "  (no /tmp/phishnet-extract-* — cleanup ran)"
+      - name: Attach log as workflow artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-log
+          path: ./daemon-log-artifact/tmp/daemon-log.txt
+          if-no-files-found: warn
+          retention-days: 7
