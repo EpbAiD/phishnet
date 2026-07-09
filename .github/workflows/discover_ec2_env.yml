@@ -1,0 +1,145 @@
+name: One-shot — Discover EC2 environment
+
+# READ-ONLY diagnostic. Starts the EC2 instance if stopped, SSHes in, and
+# prints a structured report of:
+#   - OS + kernel + init system
+#   - Every Python interpreter that exists + version + pip
+#   - What Python-3.8/3.9/3.10/3.11 packages are available via yum/dnf
+#   - Currently-installed pip packages in the user venv (if any)
+#   - Disk usage, memory, CPU
+#   - Network reachability sanity check
+#
+# Nothing is installed, changed, or written. Purely observational so we can
+# design a coherent requirements file against the real environment instead
+# of guessing.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: phishnet-data
+  EC2_INSTANCE_ID: i-0c8ab11c281702a22
+
+jobs:
+  discover:
+    name: Discover EC2 environment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 if stopped
+        id: ec2
+        run: |
+          STATE=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)
+          echo "State: $STATE"
+          if [ "$STATE" = "stopped" ] || [ "$STATE" = "stopping" ]; then
+            if [ "$STATE" = "stopping" ]; then
+              aws ec2 wait instance-stopped --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
+            fi
+            aws ec2 start-instances --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            aws ec2 wait instance-running --instance-ids ${{ env.EC2_INSTANCE_ID }}
+            sleep 45  # let SSH come up
+          fi
+          IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ env.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          echo "IP: $IP"
+          echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Inspect environment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.ec2.outputs.ec2_ip }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60s
+          command_timeout: 5m
+          script: |
+            # No `set -e` — we want every section to run even if one fails.
+            hr() { printf '\n===== %s =====\n' "$1"; }
+
+            hr "OS release"
+            cat /etc/os-release 2>/dev/null | head -20 || true
+            uname -a || true
+
+            hr "Package manager"
+            if command -v dnf >/dev/null 2>&1; then
+              echo "dnf present ($(dnf --version 2>/dev/null | head -1))"
+            elif command -v yum >/dev/null 2>&1; then
+              echo "yum present"
+            fi
+
+            hr "Every Python interpreter on PATH"
+            for p in python python2 python2.7 python3 python3.6 python3.7 python3.8 python3.9 python3.10 python3.11 python3.12 python3.13; do
+              which "$p" 2>/dev/null && "$p" --version 2>&1 || true
+            done
+
+            hr "System-level Python listings under /usr"
+            ls -1 /usr/bin/python* 2>/dev/null || true
+            ls -1 /usr/bin/pip* 2>/dev/null || true
+
+            hr "Which Python does 'python3' actually point to?"
+            readlink -f "$(which python3 2>/dev/null)" 2>/dev/null || true
+
+            hr "python3 -m pip version"
+            python3 -m pip --version 2>&1 || echo "python3 pip not installed"
+
+            hr "Available python3.X packages via yum/dnf (search only)"
+            if command -v dnf >/dev/null 2>&1; then
+              dnf list available 'python3*' 2>/dev/null | head -40 || true
+            elif command -v yum >/dev/null 2>&1; then
+              # Amazon Linux 2 ships python3 by default; extras may have 3.8+
+              yum list available 'python3*' 2>/dev/null | head -40 || true
+              amazon-linux-extras list 2>/dev/null | grep -iE 'python|installed' | head -20 || true
+            fi
+
+            hr "Existing project venv (if any)"
+            if [ -d /home/ec2-user/phishnet/.venv ]; then
+              /home/ec2-user/phishnet/.venv/bin/python --version 2>&1 || true
+              echo "--- installed packages ---"
+              /home/ec2-user/phishnet/.venv/bin/pip list 2>&1 | head -40 || true
+            else
+              echo "no /home/ec2-user/phishnet/.venv"
+            fi
+
+            hr "Existing project layout"
+            ls -la /home/ec2-user/phishnet 2>/dev/null || echo "no /home/ec2-user/phishnet"
+
+            hr "Disk usage"
+            df -h / 2>/dev/null | tail -1 || true
+            echo "Home dir usage:"
+            du -sh /home/ec2-user 2>/dev/null || true
+            echo "Top offenders in /home and /var/log:"
+            du -sh /home/ec2-user/* 2>/dev/null | sort -rh | head -8 || true
+            du -sh /var/log/* 2>/dev/null | sort -rh | head -5 || true
+
+            hr "Memory + CPU"
+            free -m 2>/dev/null || true
+            nproc 2>/dev/null || true
+
+            hr "Network sanity (should complete in seconds)"
+            timeout 5 getent hosts pypi.org > /dev/null 2>&1 && echo "pypi.org resolves" || echo "pypi.org does NOT resolve"
+            timeout 5 getent hosts s3.amazonaws.com > /dev/null 2>&1 && echo "s3 resolves" || echo "s3 does NOT resolve"
+
+            hr "systemd status (is phishnet-daemon installed?)"
+            systemctl list-unit-files 2>/dev/null | grep -i phish || echo "no phishnet unit installed"
+
+            hr "Done"
+
+      - name: Stop EC2 (return to prior state)
+        if: always()
+        run: |
+          echo "Stopping EC2 to save cost. If daemon was installed and it was already stopped, this is a no-op-safe."
+          aws ec2 stop-instances --instance-ids ${{ env.EC2_INSTANCE_ID }} || true
