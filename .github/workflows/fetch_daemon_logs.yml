@@ -68,91 +68,84 @@ jobs:
           echo "IP: $IP"
           echo "ec2_ip=$IP" >> $GITHUB_OUTPUT
 
-      - name: Build the full log bundle on EC2 into /tmp/daemon-log.txt
+      - name: Build the log on EC2 and upload it to S3 directly
+        id: bundle
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 60s
-          command_timeout: 3m
+          command_timeout: 5m
+          # Pass the S3 key we want to write to. Two secrets are also passed
+          # because /etc/phishnet.env exists for the daemon but we don't want
+          # to depend on its contents here — safer to give ec2-user its own
+          # creds for this one-shot upload.
+          envs: TARGET_KEY,LINES_TO_FETCH,AWS_KEY,AWS_SECRET
+        env:
+          TARGET_KEY: logs/daemon-${{ github.run_id }}.txt
+          LINES_TO_FETCH: ${{ github.event.inputs.lines }}
+          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           script: |
-            # Write the bundle to a file locally, then upload to S3 in the
-            # next step of the workflow (the runner has AWS creds, EC2 does
-            # too via env, but keeping the upload on the runner is simplest).
+            # No `set -e` — every section should try to run even if one fails,
+            # so we get the maximum amount of useful info even on a bad day.
+
             OUT=/tmp/daemon-log.txt
             {
               echo "===== systemctl status phishnet-daemon ====="
-              sudo systemctl status phishnet-daemon --no-pager || true
+              sudo systemctl status phishnet-daemon --no-pager 2>&1 || true
               echo ""
-              echo "===== last ${{ github.event.inputs.lines }} journal lines ====="
-              sudo journalctl -u phishnet-daemon -n ${{ github.event.inputs.lines }} --no-pager || true
+              echo "===== last ${LINES_TO_FETCH} journal lines ====="
+              sudo journalctl -u phishnet-daemon -n "${LINES_TO_FETCH}" --no-pager 2>&1 || true
               echo ""
               echo "===== active daemon processes ====="
               ps -ef | grep -E "phishnet|ec2_daemon" | grep -v grep || echo "  (no phishnet processes running)"
               echo ""
               echo "===== disk usage ====="
-              df -h / | tail -1
+              df -h / 2>&1 | tail -1
               echo ""
-              echo "===== recent /tmp entries (phishnet extraction scratch dirs) ====="
+              echo "===== /tmp phishnet-extract scratch dirs ====="
               ls -la /tmp/phishnet-extract-* 2>/dev/null || echo "  (no /tmp/phishnet-extract-* — cleanup ran)"
               echo ""
-              echo "===== Recent kernel messages (OOM kills, if any) ====="
+              echo "===== recent kernel messages (OOM kills etc) ====="
               sudo dmesg -T 2>/dev/null | tail -50 || true
             } > "$OUT" 2>&1
 
-            echo "Bundle built:"
-            wc -l "$OUT"
-            ls -la "$OUT"
+            LINE_COUNT=$(wc -l < "$OUT")
+            BYTE_COUNT=$(wc -c < "$OUT")
+            echo "Bundle built: $LINE_COUNT lines / $BYTE_COUNT bytes"
 
-      - name: SCP daemon log back to runner
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ steps.ec2.outputs.ec2_ip }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 60s
-          command_timeout: 3m
-          source: /tmp/daemon-log.txt
-          target: ./daemon-log-artifact/
+            # Upload to S3 using the venv's boto3-provided aws CLI, or the
+            # system-installed aws CLI if available. AL2023 ships aws CLI v2.
+            if ! command -v aws >/dev/null 2>&1; then
+              echo "❌ aws CLI not found on EC2 — cannot upload."
+              exit 1
+            fi
 
-      - name: Upload log to S3 for offline inspection
+            # Use the per-invocation creds we passed in via envs. This avoids
+            # relying on the daemon's /etc/phishnet.env being readable to us.
+            export AWS_ACCESS_KEY_ID="$AWS_KEY"
+            export AWS_SECRET_ACCESS_KEY="$AWS_SECRET"
+            export AWS_DEFAULT_REGION=us-east-1
+
+            aws s3 cp "$OUT" "s3://phishnet-data/${TARGET_KEY}" \
+              && echo "Uploaded to s3://phishnet-data/${TARGET_KEY}" \
+              || { echo "❌ S3 upload failed"; exit 1; }
+
+      - name: Print S3 URL + short summary
         run: |
-          # File pulled back from EC2 via SCP lands here.
-          LOCAL=./daemon-log-artifact/tmp/daemon-log.txt
-          if [ ! -f "$LOCAL" ]; then
-            echo "❌ Expected $LOCAL not found after SCP — SCP may have failed."
-            ls -la ./daemon-log-artifact/ 2>/dev/null || true
-            exit 1
-          fi
-          STAMP=$(date -u +%Y%m%d_%H%M%S)
-          S3KEY="logs/daemon-${STAMP}-run${{ github.run_id }}.txt"
-          aws s3 cp "$LOCAL" "s3://${{ env.S3_BUCKET }}/${S3KEY}"
+          S3KEY="logs/daemon-${{ github.run_id }}.txt"
+          S3URI="s3://${{ env.S3_BUCKET }}/${S3KEY}"
+          echo "===== Full log uploaded ====="
+          echo "  $S3URI"
           echo ""
-          echo "Full log uploaded to:"
-          echo "  s3://${{ env.S3_BUCKET }}/${S3KEY}"
-          echo "It will be readable directly from the AWS CLI or Claude assistant."
-
-      - name: Print short summary to the workflow console
-        run: |
-          # Show only head + tail so the console is useful, but avoid pasting
-          # phishing-URL strings (which trip some Mac paste scanners).
-          LOCAL=./daemon-log-artifact/tmp/daemon-log.txt
-          echo "===== FIRST 40 LINES ====="
-          head -40 "$LOCAL" || true
+          echo "The full log contains phishing-URL strings that some paste"
+          echo "scanners false-positive on. Fetch via AWS CLI on your own"
+          echo "machine, or just tell me the run finished — I read S3 directly."
           echo ""
-          echo "===== LAST 60 LINES ====="
-          tail -60 "$LOCAL" || true
+          echo "===== FIRST 40 LINES (from S3) ====="
+          aws s3 cp "$S3URI" - 2>/dev/null | head -40 || echo "(could not fetch preview)"
           echo ""
-          echo "===== NOTES ====="
-          echo "Full log (~$(wc -l < "$LOCAL") lines) is in the S3 object printed above"
-          echo "and also attached as an artifact on this workflow run."
-
-      - name: Attach log as workflow artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: daemon-log
-          path: ./daemon-log-artifact/tmp/daemon-log.txt
-          if-no-files-found: warn
-          retention-days: 7
+          echo "===== LAST 60 LINES (from S3) ====="
+          aws s3 cp "$S3URI" - 2>/dev/null | tail -60 || echo "(could not fetch preview)"
