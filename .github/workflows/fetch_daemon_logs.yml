@@ -71,22 +71,20 @@ jobs:
       - name: Build the log on EC2 and upload it to S3 directly
         id: bundle
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET_KEY: logs/daemon-${{ github.run_id }}.txt
+          LINES_TO_FETCH: ${{ github.event.inputs.lines }}
+          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 60s
           command_timeout: 5m
-          # Pass the S3 key we want to write to. Two secrets are also passed
-          # because /etc/phishnet.env exists for the daemon but we don't want
-          # to depend on its contents here — safer to give ec2-user its own
-          # creds for this one-shot upload.
+          # Forward the env: values above into the remote shell. Without this,
+          # $TARGET_KEY/$AWS_KEY are unset on EC2.
           envs: TARGET_KEY,LINES_TO_FETCH,AWS_KEY,AWS_SECRET
-        env:
-          TARGET_KEY: logs/daemon-${{ github.run_id }}.txt
-          LINES_TO_FETCH: ${{ github.event.inputs.lines }}
-          AWS_KEY: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           script: |
             # No `set -e` — every section should try to run even if one fails,
             # so we get the maximum amount of useful info even on a bad day.
@@ -116,22 +114,20 @@ jobs:
             BYTE_COUNT=$(wc -c < "$OUT")
             echo "Bundle built: $LINE_COUNT lines / $BYTE_COUNT bytes"
 
-            # Upload to S3 using the venv's boto3-provided aws CLI, or the
-            # system-installed aws CLI if available. AL2023 ships aws CLI v2.
+            # AL2023 ships aws CLI v2 pre-installed.
             if ! command -v aws >/dev/null 2>&1; then
-              echo "❌ aws CLI not found on EC2 — cannot upload."
+              echo "aws CLI not found on EC2 — cannot upload."
               exit 1
             fi
 
-            # Use the per-invocation creds we passed in via envs. This avoids
-            # relying on the daemon's /etc/phishnet.env being readable to us.
+            # Use the per-invocation creds we passed in via envs.
             export AWS_ACCESS_KEY_ID="$AWS_KEY"
             export AWS_SECRET_ACCESS_KEY="$AWS_SECRET"
             export AWS_DEFAULT_REGION=us-east-1
 
             aws s3 cp "$OUT" "s3://phishnet-data/${TARGET_KEY}" \
               && echo "Uploaded to s3://phishnet-data/${TARGET_KEY}" \
-              || { echo "❌ S3 upload failed"; exit 1; }
+              || { echo "S3 upload failed"; exit 1; }
 
       - name: Print S3 URL + short summary
         run: |
