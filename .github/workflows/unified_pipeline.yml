@@ -365,7 +365,13 @@ jobs:
   train-models:
     name: Train ML Models
     runs-on: ubuntu-latest
-    needs: [load-config, data-and-features]
+    # Parallel with data-and-features, NOT after it. Training uses whatever
+    # is in s3://phishnet-data/master/ at job start (previous run's data),
+    # so it doesn't need this run's fresh extraction. This turns wall-clock
+    # from (extraction ~5h) + (training ~10m) into max of the two — new
+    # models get deployed early in each scheduled slot instead of after
+    # extraction finishes.
+    needs: [load-config]
     if: needs.load-config.outputs.should_run_training == 'true'
     permissions:
       contents: write
