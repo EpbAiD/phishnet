@@ -626,19 +626,30 @@ jobs:
             echo "prior_passed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Compare AUC with previous model
+      - name: Compare AUC with deployed model (margin gate)
         id: auc_gate
         if: steps.diversity.outputs.diversity_ok == 'true'
         run: |
           echo "=============================================="
-          echo "MODEL AUC REGRESSION CHECK"
+          echo "AUC MARGIN GATE — deploy only if new model"
+          echo "beats deployed by mean +0.5pp across URL/DNS/WHOIS."
           echo "=============================================="
 
           python3 << 'PYEOF'
           import json
           import pandas as pd
 
-          # Load DEPLOYED model metadata (not last trained — the one actually serving)
+          # Minimum mean improvement (across URL/DNS/WHOIS) required to deploy.
+          # 0.005 = +0.5pp AUC. CV run-to-run noise is ~0.002-0.003, so this
+          # filters out coin-flip retrains without blocking real gains. A big
+          # win on one feature type can compensate for a small loss on another,
+          # which reflects real-world usefulness.
+          MARGIN = 0.005
+          # Hard floor: even if the mean beats the margin, refuse to deploy if
+          # any single feature type regresses by more than this. Prevents a
+          # DNS+2pp win from masking a URL-3pp loss.
+          MAX_PER_TYPE_REGRESSION = 0.02
+
           prev_auc = {}
           try:
               with open('data/processed/deployed_metadata.json') as f:
@@ -646,49 +657,60 @@ jobs:
               ensemble = prev.get('ensemble', {})
               cv_perf = ensemble.get('cv_performance', {})
               prev_auc = {
-                  'url': cv_perf.get('url_roc_auc', 0),
-                  'dns': cv_perf.get('dns_roc_auc', 0),
-                  'whois': cv_perf.get('whois_roc_auc', 0)
+                  'url':   cv_perf.get('url_roc_auc', 0),
+                  'dns':   cv_perf.get('dns_roc_auc', 0),
+                  'whois': cv_perf.get('whois_roc_auc', 0),
               }
               deployed_date = prev.get('last_trained', 'unknown')
               print(f"Currently deployed model from: {deployed_date}")
               print(f"Deployed AUCs: URL={prev_auc['url']:.4f}, DNS={prev_auc['dns']:.4f}, WHOIS={prev_auc['whois']:.4f}")
           except Exception as e:
-              print(f"No deployed metadata found ({e}), skipping AUC comparison")
+              print(f"No deployed metadata found ({e}) — nothing to compare against, passing gate")
               prev_auc = {}
 
           if not prev_auc:
-              print("✅ No previous AUC to compare against, passing gate")
+              # First deploy — allow.
               exit(0)
 
-          # Load current CV results
-          regressions = []
+          diffs = []
+          bad_type = None
           for ft in ['url', 'dns', 'whois']:
               try:
                   cv = pd.read_csv(f'analysis/{ft}_cv_results.csv')
-                  current_best = cv.iloc[0]['roc_auc']
-                  prev_best = prev_auc.get(ft, 0)
-                  diff = current_best - prev_best
-
-                  status = "✅" if diff >= -0.02 else "🚫"
-                  print(f"  {ft.upper()}: {prev_best:.4f} → {current_best:.4f} (diff: {diff:+.4f}) {status}")
-
-                  if diff < -0.02:
-                      regressions.append(f"{ft}: {diff:+.4f}")
+                  cur = float(cv.iloc[0]['roc_auc'])
+                  prev_best = float(prev_auc.get(ft, 0))
+                  d = cur - prev_best
+                  diffs.append(d)
+                  arrow = "↑" if d > 0 else ("↓" if d < 0 else "=")
+                  print(f"  {ft.upper():5s}: {prev_best:.4f} → {cur:.4f}  {arrow}{d:+.4f}")
+                  if d < -MAX_PER_TYPE_REGRESSION:
+                      bad_type = f"{ft} regressed {d:+.4f} (>{MAX_PER_TYPE_REGRESSION} floor)"
               except Exception as e:
-                  print(f"  {ft.upper()}: Could not compare - {e}")
+                  print(f"  {ft.upper()}: could not compare — {e}")
 
-          if regressions:
-              print(f"\n🚫 AUC REGRESSION DETECTED: {', '.join(regressions)}")
-              print("   Model AUC dropped by more than 2% on one or more feature types")
-              with open('AUC_REGRESSION', 'w') as f:
-                  f.write(str(regressions))
+          if bad_type:
+              print(f"\n🚫 BLOCKED: {bad_type}")
+              print("   A single feature type dropped past the hard-floor regression limit.")
+              with open('AUC_BLOCK', 'w') as f:
+                  f.write(bad_type)
+          elif not diffs:
+              print("\n🚫 BLOCKED: no CV results to compare — refusing to deploy blind.")
+              with open('AUC_BLOCK', 'w') as f:
+                  f.write("no cv results")
           else:
-              print(f"\n✅ No AUC regression detected (all within 2% tolerance)")
+              mean_diff = sum(diffs) / len(diffs)
+              if mean_diff >= MARGIN:
+                  print(f"\n✅ PASS: mean improvement {mean_diff:+.4f} ≥ margin +{MARGIN:.4f}")
+              else:
+                  print(f"\n⏸  HOLD: mean improvement {mean_diff:+.4f} below margin +{MARGIN:.4f}")
+                  print("   New model is not meaningfully better than deployed — keeping current model.")
+                  with open('AUC_BLOCK', 'w') as f:
+                      f.write(f"mean_diff={mean_diff:+.4f} < margin +{MARGIN:.4f}")
           PYEOF
 
-          if [ -f "AUC_REGRESSION" ]; then
-            echo "::warning::AUC regression detected - model performance dropped >2%. Deployment blocked."
+          if [ -f "AUC_BLOCK" ]; then
+            reason=$(cat AUC_BLOCK)
+            echo "::notice::Deployment held: $reason"
             echo "auc_passed=false" >> $GITHUB_OUTPUT
           else
             echo "auc_passed=true" >> $GITHUB_OUTPUT
@@ -806,7 +828,7 @@ jobs:
           echo "  Diversity check:        ${{ steps.diversity.outputs.diversity_ok || 'skipped' }}"
           echo "  Golden test gate:       ${{ steps.golden_gate.outputs.golden_passed || 'skipped' }}"
           echo "  Realistic-prior gates:  ${{ steps.prior_gates.outputs.prior_passed || 'skipped' }}"
-          echo "  AUC regression:         ${{ steps.auc_gate.outputs.auc_passed || 'skipped' }}"
+          echo "  AUC margin gate:        ${{ steps.auc_gate.outputs.auc_passed || 'skipped' }}"
           echo ""
 
           if [ "${{ steps.golden_gate.outputs.golden_passed }}" == "false" ]; then
@@ -818,9 +840,11 @@ jobs:
             echo "   Model does not meet operational thresholds at deployment base rates"
             echo "   Previous production model remains active"
           elif [ "${{ steps.auc_gate.outputs.auc_passed }}" == "false" ]; then
-            echo "🚫 DEPLOYMENT BLOCKED: AUC regression detected"
-            echo "   Model performance dropped >2% - model not deployed"
-            echo "   Previous production model remains active"
+            echo "⏸  DEPLOYMENT HELD: AUC margin gate did not pass"
+            echo "   New model must beat the deployed model by mean +0.5pp AUC"
+            echo "   across URL/DNS/WHOIS to deploy. Not a failure — this run"
+            echo "   simply didn't produce a meaningfully better model."
+            echo "   Previous production model remains active."
           elif [ "${{ steps.diversity.outputs.diversity_ok }}" == "true" ]; then
             echo "✅ All gates passed - models trained and uploaded to S3"
             echo "   The production API will hot-reload new models automatically"

@@ -30,12 +30,17 @@ stages:
 
   # STAGE 3: Model Training
   model_training:
-    frequency: "weekly"      # Weekly to reduce costs, daily collection for data growth
+    frequency: "daily"       # Retrain daily — phishing landscape shifts fast (new
+                             # kits/domains rotate hourly). No-improvement days are
+                             # cheap; missed improvements are expensive.
     enabled: true
 
   # STAGE 4: Model Deployment
   deployment:
-    frequency: "weekly"      # Weekly to match training frequency
+    frequency: "daily"       # Deployment attempted daily, but the AUC-margin gate
+                             # only actually swaps the model in if the new one beats
+                             # the deployed one by mean +0.5pp across URL/DNS/WHOIS.
+                             # No-improvement days keep the deployed model in place.
     enabled: true
 
 # Validation Settings
