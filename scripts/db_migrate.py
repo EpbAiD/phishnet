@@ -37,12 +37,16 @@ DATABASE_URL = os.getenv("DATABASE_URL") or (
 )
 S3_BUCKET = os.getenv("S3_BUCKET", "phishnet-data")
 
-# Mapping: (table_name, s3_key). Column order in CSV must match column
-# order in the table; the schema was built to match the current masters.
-MASTERS: tuple[tuple[str, str], ...] = (
-    ("url_features",   "master/url_features_master.csv"),
-    ("dns_features",   "master/dns_features_master.csv"),
-    ("whois_features", "master/whois_features_master.csv"),
+# Mapping: (table_name, s3_key, pk_column). Column order in CSV must match
+# column order in the table; the schema was built to match the current masters.
+# pk_column is used to dedupe rows during the streaming rewrite — the source
+# CSVs are known to contain duplicates (esp. DNS: multiple URLs on the same
+# domain each write a row with identical DNS features). "Last write wins"
+# matches the old pandas drop_duplicates(keep='last') behavior.
+MASTERS: tuple[tuple[str, str, str], ...] = (
+    ("url_features",   "master/url_features_master.csv",   "url"),
+    ("dns_features",   "master/dns_features_master.csv",   "domain"),
+    ("whois_features", "master/whois_features_master.csv", "url"),
 )
 
 # Postgres COPY treats "" as an empty string, which is invalid for TIMESTAMPTZ
@@ -71,11 +75,16 @@ def _table_is_empty(conn, table: str) -> bool:
     return not has_any
 
 
-def _copy_csv_from_s3(conn, table: str, s3_key: str) -> int:
+def _copy_csv_from_s3(conn, table: str, s3_key: str, pk_col: str) -> int:
     """
-    Download the S3 CSV to a temp file, rewrite empty fields as NULL
-    sentinels via streaming csv.reader/writer (no pandas, no full-buffer
-    load), then COPY into `table`. Returns row count.
+    Download the S3 CSV to a temp file, dedupe by pk_col (last write wins),
+    rewrite empty fields as NULL sentinels, then COPY into `table`.
+    Returns row count actually inserted.
+
+    Dedup approach: two passes over the local temp file.
+      Pass 1 — read only pk_col, build {pk: last_line_index}.
+      Pass 2 — write only lines whose index matches the recorded last_line.
+    Memory footprint: one dict entry per unique PK (~150K rows → ~15 MB).
     """
     s3 = boto3.client("s3")
 
@@ -94,15 +103,44 @@ def _copy_csv_from_s3(conn, table: str, s3_key: str) -> int:
             flush=True,
         )
 
+        # Pass 1: dedupe by pk_col (keeping the last occurrence's line index).
+        with open(raw_path, "r", encoding="utf-8", newline="") as raw:
+            reader = csv.reader(raw)
+            header = next(reader)
+            columns = [c.strip() for c in header]
+            if pk_col not in columns:
+                raise RuntimeError(
+                    f"PK column '{pk_col}' not in CSV header for {table}: {columns}"
+                )
+            pk_idx = columns.index(pk_col)
+            last_line_for_pk: dict[str, int] = {}
+            total_seen = 0
+            for i, row in enumerate(reader):
+                if len(row) <= pk_idx:
+                    continue  # short row, skip
+                last_line_for_pk[row[pk_idx]] = i
+                total_seen += 1
+
+        keep = set(last_line_for_pk.values())
+        drop_count = total_seen - len(keep)
+        if drop_count:
+            print(
+                f"[migrate]   deduped by {pk_col}: {total_seen} raw rows → "
+                f"{len(keep)} unique (last-write-wins, dropped {drop_count})",
+                flush=True,
+            )
+
+        # Pass 2: write header + only the kept rows, with empty→NULL rewrite.
         with open(raw_path, "r", encoding="utf-8", newline="") as raw, \
              open(clean_path, "w", encoding="utf-8", newline="") as clean:
             reader = csv.reader(raw)
             writer = csv.writer(clean, quoting=csv.QUOTE_MINIMAL)
-            header = next(reader)
-            columns = [c.strip() for c in header]
+            next(reader)  # skip header we already parsed
             writer.writerow(columns)
             row_count = 0
-            for row in reader:
+            for i, row in enumerate(reader):
+                if i not in keep:
+                    continue
                 writer.writerow(
                     _NULL_SENTINEL if v == "" else v for v in row
                 )
@@ -135,7 +173,7 @@ def migrate_from_s3_if_empty(conn) -> dict[str, int]:
     Never TRUNCATEs. Returns {table: rows_migrated} — 0 means skipped.
     """
     results: dict[str, int] = {}
-    for table, s3_key in MASTERS:
+    for table, s3_key, pk_col in MASTERS:
         if not _table_is_empty(conn, table):
             with conn.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM {table}")
@@ -143,7 +181,7 @@ def migrate_from_s3_if_empty(conn) -> dict[str, int]:
             print(f"[migrate] {table}: skip ({n} rows already present)", flush=True)
             results[table] = 0
             continue
-        n = _copy_csv_from_s3(conn, table, s3_key)
+        n = _copy_csv_from_s3(conn, table, s3_key, pk_col)
         conn.commit()
         results[table] = n
     return results
