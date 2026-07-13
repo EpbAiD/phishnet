@@ -1,0 +1,106 @@
+name: 'Open this runner temporary access to RDS'
+description: >
+  Whitelists the current GitHub Actions runner's public IP in the RDS
+  instance's security group on port 5432. The rule stays until you
+  explicitly revoke it — composite actions can't run post-job cleanup,
+  so the CALLER workflow must include this final step to close the
+  hole even on failure:
+
+      - name: Revoke RDS access
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
+
+  This action exports RDS_TMP_SG_ID, RDS_TMP_RUNNER_IP, RDS_TMP_AWS_REGION
+  into $GITHUB_ENV so the revoke step above works copy-paste.
+
+  Assumes the caller has already run aws-actions/configure-aws-credentials
+  with an IAM identity that can:
+    rds:DescribeDBInstances
+    ec2:DescribeSecurityGroups
+    ec2:AuthorizeSecurityGroupIngress
+    ec2:RevokeSecurityGroupIngress
+
+inputs:
+  db_instance_id:
+    description: 'RDS DB instance identifier (e.g. phishnet-db)'
+    required: true
+  aws_region:
+    description: 'AWS region the DB lives in'
+    required: false
+    default: 'us-east-1'
+
+outputs:
+  security_group_id:
+    description: 'The RDS security group we opened, for debugging'
+    value: ${{ steps.discover.outputs.sg_id }}
+  runner_ip:
+    description: 'The public IP we authorized'
+    value: ${{ steps.discover.outputs.runner_ip }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Discover runner IP + RDS security group
+      id: discover
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Runner public IP. checkip.amazonaws.com is stable, no rate limits.
+        RUNNER_IP=$(curl -fsSL https://checkip.amazonaws.com | tr -d '[:space:]')
+        if [[ ! "$RUNNER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "❌ Could not determine runner public IP: got '$RUNNER_IP'"
+          exit 1
+        fi
+        echo "Runner public IP: $RUNNER_IP"
+
+        # Look up the SG attached to the RDS instance.
+        SG_ID=$(aws rds describe-db-instances \
+          --db-instance-identifier "${{ inputs.db_instance_id }}" \
+          --region "${{ inputs.aws_region }}" \
+          --query 'DBInstances[0].VpcSecurityGroups[0].VpcSecurityGroupId' \
+          --output text)
+        if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
+          echo "❌ Could not resolve security group for ${{ inputs.db_instance_id }}"
+          exit 1
+        fi
+        echo "RDS security group: $SG_ID"
+
+        echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+        echo "runner_ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
+
+    - name: Authorize port 5432 for runner IP
+      shell: bash
+      run: |
+        set -euo pipefail
+        # `|| true` — if a rule for exactly this IP already exists (leftover
+        # from a prior failed cleanup), authorize returns InvalidPermission.
+        # Duplicate; we accept that and proceed.
+        aws ec2 authorize-security-group-ingress \
+          --group-id "${{ steps.discover.outputs.sg_id }}" \
+          --protocol tcp \
+          --port 5432 \
+          --cidr "${{ steps.discover.outputs.runner_ip }}/32" \
+          --region "${{ inputs.aws_region }}" \
+          2>&1 | grep -v "already exists" || true
+        echo "✅ Runner IP whitelisted on port 5432"
+
+    - name: Export cleanup vars for caller's revoke step
+      shell: bash
+      env:
+        SG_ID: ${{ steps.discover.outputs.sg_id }}
+        RUNNER_IP: ${{ steps.discover.outputs.runner_ip }}
+        AWS_REGION_IN: ${{ inputs.aws_region }}
+      run: |
+        # Composite actions can't register a post-job step (only
+        # javascript/docker actions can). Export the values so a
+        # trailing `if: always()` step in the caller can revoke.
+        echo "RDS_TMP_SG_ID=$SG_ID" >> "$GITHUB_ENV"
+        echo "RDS_TMP_RUNNER_IP=$RUNNER_IP" >> "$GITHUB_ENV"
+        echo "RDS_TMP_AWS_REGION=$AWS_REGION_IN" >> "$GITHUB_ENV"

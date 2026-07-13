@@ -1,0 +1,88 @@
+name: Test RDS access (whitelist runner IP, connect, revoke)
+
+# One-off test. Confirms the composite action .github/actions/rds-access
+# actually opens port 5432 to the runner IP and closes it afterward.
+#
+# WHAT IT DOES:
+#   1. Whitelists this runner's IP in the RDS security group.
+#   2. Connects to Postgres and runs SELECT count(*) on url_features.
+#      (After the daemon has done its self-migration, this should show
+#      144705 rows or thereabouts.)
+#   3. Revokes the whitelist even on failure.
+#
+# HOW TO RUN:
+#   Actions tab → "Test RDS access" → Run workflow.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  DB_INSTANCE_ID: phishnet-db
+
+jobs:
+  test:
+    name: Connect to RDS and count rows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Whitelist this runner in RDS SG
+        uses: ./.github/actions/rds-access
+        with:
+          db_instance_id: ${{ env.DB_INSTANCE_ID }}
+          aws_region: ${{ env.AWS_REGION }}
+
+      - name: Install psycopg2
+        run: pip install psycopg2-binary
+
+      - name: Connect to Postgres and report status
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python3 << 'PY'
+          import os, psycopg2
+          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+          with conn.cursor() as cur:
+              cur.execute("SELECT current_database(), version()")
+              db, ver = cur.fetchone()
+              print(f"Connected. Database: {db}")
+              print(f"Version:  {ver}")
+              print()
+              # Existence + counts for the tables the daemon writes to.
+              for t in ("url_features", "dns_features", "whois_features"):
+                  cur.execute(
+                      "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                      "WHERE table_name = %s)", (t,))
+                  (exists,) = cur.fetchone()
+                  if exists:
+                      cur.execute(f"SELECT COUNT(*) FROM {t}")
+                      (n,) = cur.fetchone()
+                      print(f"  {t:20s} {n:>8d} rows")
+                  else:
+                      print(f"  {t:20s} does not exist yet")
+          conn.close()
+          PY
+
+      - name: Revoke RDS access
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          # Idempotent: swallow the error if the rule was already removed
+          # (e.g. by a concurrent run). Never fail the job because of this.
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
+          echo "✅ Revoked runner IP $RDS_TMP_RUNNER_IP from SG $RDS_TMP_SG_ID"
