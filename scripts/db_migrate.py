@@ -115,11 +115,24 @@ def _copy_csv_from_s3(conn, table: str, s3_key: str, pk_col: str) -> int:
             pk_idx = columns.index(pk_col)
             last_line_for_pk: dict[str, int] = {}
             total_seen = 0
+            null_pk_skipped = 0
             for i, row in enumerate(reader):
                 if len(row) <= pk_idx:
                     continue  # short row, skip
-                last_line_for_pk[row[pk_idx]] = i
+                pk_val = row[pk_idx]
+                if pk_val == "":
+                    # Row has no PK — old extraction failure. Can't insert with
+                    # NULL PK (not-null constraint) and can't dedupe it. Drop.
+                    null_pk_skipped += 1
+                    continue
+                last_line_for_pk[pk_val] = i
                 total_seen += 1
+            if null_pk_skipped:
+                print(
+                    f"[migrate]   dropped {null_pk_skipped} rows with empty "
+                    f"{pk_col} (unusable, old extraction failures)",
+                    flush=True,
+                )
 
         keep = set(last_line_for_pk.values())
         drop_count = total_seen - len(keep)
