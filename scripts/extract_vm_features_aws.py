@@ -280,121 +280,34 @@ def extract_and_accumulate(batch_date: str):
     print(f"✅ DNS features: {len(df_dns)} rows × {len(df_dns.columns)} columns", flush=True)
     print(f"✅ WHOIS features: {len(df_whois)} rows × {len(df_whois.columns)} columns", flush=True)
 
-    # Step 5: Download existing master datasets from S3
+    # Step 5: Upsert this batch's rows into Postgres.
+    #
+    # Replaces the old download-master → concat → dedup → upload-master loop.
+    # That loop OOMed t3.micro at ~500 MB masters because pandas held all
+    # three (URL/DNS/WHOIS) in memory simultaneously. Upserting one batch
+    # (~3000 rows) keeps memory bounded to ~5 MB regardless of table size.
     print(f"\n{'=' * 60}", flush=True)
-    print("STEP 5: Download existing SEPARATE master datasets from S3", flush=True)
+    print("STEP 5: Upsert this batch into Postgres", flush=True)
     print("=" * 60, flush=True)
 
-    masters = {
-        'url': {'new': df_url_features, 'file': 'vm_data/master/url_features_master.csv', 's3_key': 'master/url_features_master.csv'},
-        'dns': {'new': df_dns, 'file': 'vm_data/master/dns_features_master.csv', 's3_key': 'master/dns_features_master.csv'},
-        'whois': {'new': df_whois, 'file': 'vm_data/master/whois_features_master.csv', 's3_key': 'master/whois_features_master.csv'}
-    }
+    # Local import so a broken Postgres connection doesn't crash extraction
+    # workflows that don't depend on the DB (e.g. a future backfill test).
+    from scripts import db_migrate, db_upsert
 
-    for feature_type, config in masters.items():
-        # Only treat a genuine "object does not exist" (404 NoSuchKey) as a fresh
-        # start. ANY other error (timeout, network blip, throttling) must ABORT —
-        # otherwise a transient read failure silently overwrites the whole master.
-        # This is exactly what wiped the 609k-row WHOIS master on 2026-05-22.
-        try:
-            s3.head_object(Bucket=S3_BUCKET, Key=config['s3_key'])
-            exists = True
-        except ClientError as e:
-            code = e.response.get('Error', {}).get('Code', '')
-            if code in ('404', 'NoSuchKey', 'NotFound'):
-                print(f"ℹ️  No existing {feature_type.upper()} master - creating new", flush=True)
-                config['existing'] = None
-                exists = False
-            else:
-                raise RuntimeError(
-                    f"FATAL: could not stat {feature_type.upper()} master "
-                    f"(code={code}). Aborting to avoid overwriting accumulated data."
-                ) from e
-
-        if exists:
-            # Retry the download a few times — never give up and create-new on
-            # a transient error for a file we KNOW exists.
-            last_err = None
-            for attempt in range(3):
-                try:
-                    s3.download_file(S3_BUCKET, config['s3_key'], config['file'])
-                    config['existing'] = pd.read_csv(config['file'])
-                    print(f"📊 Existing {feature_type.upper()} master: {len(config['existing'])} rows", flush=True)
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-                    print(f"  ⚠️ Download attempt {attempt + 1} failed for {feature_type.upper()}: {e}", flush=True)
-                    time.sleep(5 * (attempt + 1))
-            if last_err is not None:
-                raise RuntimeError(
-                    f"FATAL: {feature_type.upper()} master exists in S3 but could not "
-                    f"be downloaded after 3 attempts. Aborting to avoid data loss."
-                ) from last_err
-
-    # Step 6: Accumulate each master separately
-    print(f"\n{'=' * 60}", flush=True)
-    print("STEP 6: Accumulate EACH master dataset separately", flush=True)
-    print("=" * 60, flush=True)
-
-    for feature_type, config in masters.items():
-        print(f"\n--- {feature_type.upper()} ---", flush=True)
-        print(f"📊 New batch: {len(config['new'])} rows", flush=True)
-
-        if config['existing'] is not None:
-            df_combined = pd.concat([config['existing'], config['new']], ignore_index=True)
-            df_combined = df_combined.drop_duplicates(subset=['url'], keep='last')
-
-            added = len(df_combined) - len(config['existing'])
-            duplicates = len(config['new']) - added
-
-            print(f"✅ Combined: {len(df_combined)} rows (+{added} new, {duplicates} duplicates)", flush=True)
-        else:
-            df_combined = config['new']
-            print(f"✅ Initial: {len(df_combined)} rows", flush=True)
-
-        config['combined'] = df_combined
-        df_combined.to_csv(config['file'], index=False)
-
-    # Step 7: Upload all three masters back to S3
-    print(f"\n{'=' * 60}", flush=True)
-    print("STEP 7: Upload THREE SEPARATE master datasets to S3", flush=True)
-    print("=" * 60, flush=True)
-
-    for feature_type, config in masters.items():
-        # Shrink guard: never replace a master with one that's drastically smaller.
-        # Accumulation should only ever grow (or stay same after dedup). A large
-        # drop means something went wrong upstream — refuse to upload.
-        existing_n = len(config['existing']) if config['existing'] is not None else 0
-        new_n = len(config['combined'])
-        if existing_n > 100 and new_n < existing_n * 0.5:
-            print(
-                f"🚫 ABORT upload for {feature_type.upper()}: new master ({new_n} rows) "
-                f"is <50% of existing ({existing_n} rows). Refusing to shrink master.",
-                flush=True,
-            )
-            raise RuntimeError(
-                f"{feature_type.upper()} master would shrink from {existing_n} to {new_n} rows — aborting."
-            )
-        s3.upload_file(config['file'], S3_BUCKET, config['s3_key'])
-        print(f"✅ Uploaded {feature_type.upper()} master: {new_n} rows", flush=True)
-
-    # Also upload combined for backwards compatibility
-    merged = df_url_features.merge(df_dns.drop(columns=['label'], errors='ignore'), on='url', how='left')
-    merged = merged.merge(df_whois.drop(columns=['label'], errors='ignore'), on='url', how='left')
-    combined_file = "vm_data/master/phishing_features_master.csv"
-
+    conn = db_upsert.open_conn()
     try:
-        s3.download_file(S3_BUCKET, "master/phishing_features_master.csv", combined_file)
-        df_existing_combined = pd.read_csv(combined_file)
-        df_combined_all = pd.concat([df_existing_combined, merged], ignore_index=True)
-        df_combined_all = df_combined_all.drop_duplicates(subset=['url'], keep='last')
-    except Exception:
-        df_combined_all = merged
+        # Idempotent — ensures tables exist even on a fresh RDS instance.
+        db_migrate.ensure_schema(conn)
+        # One-time data migration from S3 CSVs (skips per table if non-empty).
+        # After the first successful daemon run, this is a no-op fast path.
+        db_migrate.migrate_from_s3_if_empty(conn)
 
-    df_combined_all.to_csv(combined_file, index=False)
-    s3.upload_file(combined_file, S3_BUCKET, "master/phishing_features_master.csv")
-    print(f"✅ Uploaded combined master (backwards compat): {len(df_combined_all)} rows", flush=True)
+        n_url   = db_upsert.upsert_url_features(conn, df_url_features)
+        n_dns   = db_upsert.upsert_dns_features(conn, df_dns)
+        n_whois = db_upsert.upsert_whois_features(conn, df_whois)
+        print(f"✅ Upserted: url={n_url}  dns={n_dns}  whois={n_whois}", flush=True)
+    finally:
+        conn.close()
 
     # Cleanup checkpoint files on success
     for f in [checkpoint_file, dns_checkpoint, whois_checkpoint]:
@@ -402,11 +315,8 @@ def extract_and_accumulate(batch_date: str):
             os.remove(f)
 
     print(f"\n{'=' * 60}", flush=True)
-    print("✅ COMPLETE: THREE separate feature masters created!", flush=True)
+    print("✅ COMPLETE: batch upserted to Postgres", flush=True)
     print("=" * 60, flush=True)
-    print(f"URL master:   {len(masters['url']['combined'])} rows", flush=True)
-    print(f"DNS master:   {len(masters['dns']['combined'])} rows", flush=True)
-    print(f"WHOIS master: {len(masters['whois']['combined'])} rows", flush=True)
 
 
 def _cleanup_ec2_scratch():

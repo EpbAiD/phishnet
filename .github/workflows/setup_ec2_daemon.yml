@@ -68,6 +68,9 @@ jobs:
           mkdir -p _install_payload/scripts _install_payload/src
           cp scripts/ec2_daemon.py                   _install_payload/scripts/
           cp scripts/extract_vm_features_aws.py      _install_payload/scripts/
+          cp scripts/db_migrate.py                   _install_payload/scripts/
+          cp scripts/db_upsert.py                    _install_payload/scripts/
+          cp scripts/db_schema.sql                   _install_payload/scripts/
           cp scripts/phishnet-daemon.service         _install_payload/scripts/
           cp scripts/phishnet-daemon-sudoers         _install_payload/scripts/
           # Slim EC2-only requirements — the full requirements.txt has ML
@@ -98,13 +101,14 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID_SECRET: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
         with:
           host: ${{ steps.ec2.outputs.ec2_ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 60s
           command_timeout: 10m
-          envs: AWS_ACCESS_KEY_ID_SECRET,AWS_SECRET_ACCESS_KEY_SECRET
+          envs: AWS_ACCESS_KEY_ID_SECRET,AWS_SECRET_ACCESS_KEY_SECRET,DATABASE_URL_SECRET
           script: |
             set -euo pipefail
 
@@ -124,6 +128,9 @@ jobs:
             mkdir -p "$DST/scripts" "$DST/src"
             cp "$SRC/scripts/ec2_daemon.py"              "$DST/scripts/"
             cp "$SRC/scripts/extract_vm_features_aws.py" "$DST/scripts/"
+            cp "$SRC/scripts/db_migrate.py"              "$DST/scripts/"
+            cp "$SRC/scripts/db_upsert.py"               "$DST/scripts/"
+            cp "$SRC/scripts/db_schema.sql"              "$DST/scripts/"
             cp -r "$SRC/src/"* "$DST/src/"
             cp "$SRC/requirements-ec2.txt"               "$DST/"
 
@@ -154,7 +161,7 @@ jobs:
             "$DST/.venv/bin/pip" install --upgrade pip
             "$DST/.venv/bin/pip" install -r "$DST/requirements-ec2.txt"
 
-            echo "=== Write /etc/phishnet.env (AWS creds + region) ==="
+            echo "=== Write /etc/phishnet.env (AWS + DB creds + region) ==="
             sudo bash -c "cat > /etc/phishnet.env" <<EOF
             AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_SECRET
             AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_SECRET
@@ -162,6 +169,7 @@ jobs:
             S3_BUCKET=phishnet-data
             PHISHNET_POLL_INTERVAL_SEC=60
             PHISHNET_IDLE_SHUTDOWN_MIN=10
+            DATABASE_URL=$DATABASE_URL_SECRET
             EOF
             sudo chmod 0640 /etc/phishnet.env
             sudo chown root:root /etc/phishnet.env
