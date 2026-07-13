@@ -134,6 +134,25 @@ jobs:
             cp -r "$SRC/src/"* "$DST/src/"
             cp "$SRC/requirements-ec2.txt"               "$DST/"
 
+            echo "=== Disk before cleanup ==="
+            df -h / /tmp 2>&1 | tail -3
+
+            echo "=== Cleanup: pip cache, /tmp scratch, journal, dnf cache ==="
+            # pip's global cache eats gigabytes after enough dependency churn.
+            rm -rf /home/ec2-user/.cache/pip 2>/dev/null || true
+            # Old daemon scratch dirs from crashed batches — the daemon uses
+            # tempfile.TemporaryDirectory now, but pre-fix runs left debris.
+            rm -rf /tmp/phishnet-extract-* 2>/dev/null || true
+            # Systemd journal accumulates fast under crashloops.
+            sudo journalctl --vacuum-size=100M 2>&1 | tail -3 || true
+            # dnf/yum cache we don't need on a long-running instance.
+            sudo dnf clean all >/dev/null 2>&1 || sudo yum clean all >/dev/null 2>&1 || true
+            # Any half-built venv from a prior failed install.
+            rm -rf "$DST/.venv" 2>/dev/null || true
+
+            echo "=== Disk after cleanup ==="
+            df -h / /tmp 2>&1 | tail -3
+
             echo "=== Ensure Python + venv ==="
             # Prefer the newest Python we can find. AL2023 default is 3.9;
             # AL2 was 3.7 with 3.8 as extras. Pick the highest available.
