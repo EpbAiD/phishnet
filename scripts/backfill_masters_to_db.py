@@ -20,9 +20,11 @@ from pathlib import Path
 import boto3
 import psycopg2
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://phishnet_admin:PhishNet2024Secure@phishnet-db.c83quikqw26n.us-east-1.rds.amazonaws.com:5432/phishnet",
+# os.getenv returns "" (not the default) when the env var is set to empty,
+# which happens in GitHub Actions if the secret is missing. That silently
+# makes psycopg2 try a local Unix socket. Treat empty as unset.
+DATABASE_URL = os.getenv("DATABASE_URL") or (
+    "postgresql://phishnet_admin:PhishNet2024Secure@phishnet-db.c83quikqw26n.us-east-1.rds.amazonaws.com:5432/phishnet"
 )
 S3_BUCKET = os.getenv("S3_BUCKET", "phishnet-data")
 
