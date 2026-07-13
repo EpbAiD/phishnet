@@ -181,14 +181,53 @@ jobs:
           echo "batch_name=$BATCH_NAME" >> $GITHUB_ENV
           echo "batch_file=$BATCH_FILE" >> $GITHUB_ENV
 
-      - name: Download master dataset for balance check
+      - name: Whitelist this runner in RDS SG (for balance check)
+        uses: ./.github/actions/rds-access
+        with:
+          db_instance_id: phishnet-db
+          aws_region: ${{ env.AWS_REGION }}
+
+      - name: Export URL master from Postgres for balance check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           mkdir -p data/processed
-          # Download URL master to compute current class balance
-          # fetch_urls.py reads this to decide adaptive batch ratio
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv \
-            data/processed/phishing_features_complete.csv 2>/dev/null \
-            || echo "No master yet — defaulting to 50/50"
+          # fetch_urls.py reads phishing_features_complete.csv to compute
+          # class balance and to skip URLs already in the master. Since the
+          # daemon no longer writes CSV masters to S3, dump url_features
+          # from Postgres to the same path. Streaming — constant memory
+          # regardless of table size.
+          pip install psycopg2-binary >/dev/null 2>&1
+          python - <<'PY'
+          import csv, os, psycopg2
+          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+          out = "data/processed/phishing_features_complete.csv"
+          with conn.cursor(name="balance_export") as cur:
+              cur.itersize = 10_000
+              # Only the columns fetch_urls.py needs (url + label). Full
+              # export would be wasteful — this is called on every twice-
+              # daily pipeline run.
+              cur.execute("SELECT url, label FROM url_features")
+              with open(out, "w", encoding="utf-8", newline="") as f:
+                  w = csv.writer(f)
+                  w.writerow(["url", "label"])
+                  n = 0
+                  for row in cur:
+                      w.writerow(row)
+                      n += 1
+                  print(f"Exported {n} rows to {out}")
+          conn.close()
+          PY
+
+      - name: Revoke RDS access (balance check)
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
 
       - name: Collect URLs
         run: |
@@ -346,18 +385,10 @@ jobs:
       # briefly across back-to-back runs, which is cheaper than repeated
       # boot cycles.
 
-      - name: Download master dataset from S3 for training
-        run: |
-          echo "Downloading updated master dataset from S3..."
-          mkdir -p data/processed
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
-
-      - name: Upload master dataset as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: features-master
-          path: data/processed/phishing_features_complete.csv
-          retention-days: 1
+      # data-and-features used to publish an S3 CSV artifact for
+      # train-models to consume. That dependency was removed when we
+      # parallelized the two jobs, and now train-models exports directly
+      # from Postgres — no artifact needed.
 
   # ========================================================================
   # JOB 3: Model Training
@@ -396,11 +427,49 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download master dataset from S3
+      - name: Whitelist this runner in RDS SG
+        uses: ./.github/actions/rds-access
+        with:
+          db_instance_id: phishnet-db
+          aws_region: ${{ env.AWS_REGION }}
+
+      - name: Export joined master from Postgres
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          echo "Downloading master dataset from S3..."
+          # Postgres 'phishing_features' view is url_features LEFT JOIN
+          # dns_features LEFT JOIN whois_features on url. Streams straight
+          # into the same CSV path downstream steps already read.
+          pip install psycopg2-binary >/dev/null 2>&1
           mkdir -p data/processed
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/phishing_features_master.csv data/processed/phishing_features_complete.csv
+          python - <<'PY'
+          import csv, os, psycopg2
+          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+          out = "data/processed/phishing_features_complete.csv"
+          with conn.cursor(name="training_export") as cur:
+              cur.itersize = 10_000
+              cur.execute("SELECT * FROM phishing_features")
+              colnames = [d[0] for d in cur.description]
+              with open(out, "w", encoding="utf-8", newline="") as f:
+                  w = csv.writer(f)
+                  w.writerow(colnames)
+                  n = 0
+                  for row in cur:
+                      w.writerow("" if v is None else v for v in row)
+                      n += 1
+                  print(f"Exported {n} rows × {len(colnames)} columns to {out}")
+          conn.close()
+          PY
+
+      - name: Revoke RDS access
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
 
       - name: Apply user feedback corrections
         env:

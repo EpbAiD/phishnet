@@ -40,7 +40,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt boto3 pyarrow
+        run: pip install -r requirements.txt boto3 pyarrow psycopg2-binary
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -49,32 +49,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download master datasets from S3
+      - name: Whitelist this runner in RDS SG
+        uses: ./.github/actions/rds-access
+        with:
+          db_instance_id: phishnet-db
+          aws_region: ${{ env.AWS_REGION }}
+
+      - name: Export master datasets from Postgres
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           echo "=============================================="
-          echo "DOWNLOADING MASTER DATASETS FROM S3"
+          echo "EXPORTING MASTER DATASETS FROM POSTGRES"
           echo "=============================================="
 
-          mkdir -p data/processed
+          # Streams each table to disk in 10K-row pages. Downstream scripts
+          # keep reading data/processed/{url,dns,whois}_features_master.csv
+          # unchanged — same paths, same schema.
+          python scripts/db_export_masters.py
 
-          # Download all three master datasets
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/url_features_master.csv \
-            data/processed/url_features_master.csv 2>/dev/null || echo "No URL master found"
-
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/dns_features_master.csv \
-            data/processed/dns_features_master.csv 2>/dev/null || echo "No DNS master found"
-
-          aws s3 cp s3://${{ env.S3_BUCKET }}/master/whois_features_master.csv \
-            data/processed/whois_features_master.csv 2>/dev/null || echo "No WHOIS master found"
-
-          # Download the DEPLOYED model metadata for AUC comparison
-          # This only gets updated when a model passes all gates and is actually deployed
+          # Download the DEPLOYED model metadata for AUC comparison. This
+          # only gets updated when a model passes all gates and is actually
+          # deployed — kept in S3 (not Postgres) alongside the model blobs.
           aws s3 cp s3://${{ env.S3_BUCKET }}/models/deployed_metadata.json \
             data/processed/deployed_metadata.json 2>/dev/null || \
           aws s3 cp s3://${{ env.S3_BUCKET }}/models/production_metadata.json \
             data/processed/deployed_metadata.json 2>/dev/null || echo "No previous metadata"
 
-          # Show dataset sizes
           echo ""
           echo "Dataset sizes:"
           for f in data/processed/*_master.csv; do
@@ -83,6 +84,17 @@ jobs:
               echo "  $(basename $f): $rows rows"
             fi
           done
+
+      - name: Revoke RDS access
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
+          echo "✅ Revoked runner IP $RDS_TMP_RUNNER_IP from SG $RDS_TMP_SG_ID"
 
       - name: Check data diversity
         id: diversity
