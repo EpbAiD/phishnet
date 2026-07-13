@@ -43,10 +43,16 @@ jobs:
           db_instance_id: ${{ env.DB_INSTANCE_ID }}
           aws_region: ${{ env.AWS_REGION }}
 
-      - name: Install psycopg2
-        run: pip install psycopg2-binary
+      - name: Install psycopg2 + boto3 (for db_migrate)
+        run: pip install psycopg2-binary boto3
 
-      - name: Connect to Postgres and report status
+      - name: Apply schema + migrate data from S3 (if tables empty)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          S3_BUCKET: phishnet-data
+        run: python scripts/db_migrate.py
+
+      - name: Report final table row counts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -59,18 +65,14 @@ jobs:
               print(f"Connected. Database: {db}")
               print(f"Version:  {ver}")
               print()
-              # Existence + counts for the tables the daemon writes to.
               for t in ("url_features", "dns_features", "whois_features"):
-                  cur.execute(
-                      "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
-                      "WHERE table_name = %s)", (t,))
-                  (exists,) = cur.fetchone()
-                  if exists:
-                      cur.execute(f"SELECT COUNT(*) FROM {t}")
-                      (n,) = cur.fetchone()
-                      print(f"  {t:20s} {n:>8d} rows")
-                  else:
-                      print(f"  {t:20s} does not exist yet")
+                  cur.execute(f"SELECT COUNT(*) FROM {t}")
+                  (n,) = cur.fetchone()
+                  print(f"  {t:20s} {n:>8d} rows")
+              # Also verify the join view resolves.
+              cur.execute("SELECT COUNT(*) FROM phishing_features")
+              (n,) = cur.fetchone()
+              print(f"  {'phishing_features':20s} {n:>8d} rows (via view)")
           conn.close()
           PY
 
