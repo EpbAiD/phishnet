@@ -63,8 +63,8 @@ jobs:
         run: |
           aws ec2 describe-security-groups \
             --group-ids "${{ steps.sgs.outputs.rds_sg }}" \
-            --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp,UserIdGroupPairs[*].GroupId]' \
-            --output table
+            --query 'SecurityGroups[0].IpPermissions' \
+            --output json 2>&1 || echo "(no inbound rules or read failed)"
 
       - name: Authorize EC2 SG on port 5432 of RDS SG
         run: |
@@ -87,5 +87,5 @@ jobs:
         run: |
           aws ec2 describe-security-groups \
             --group-ids "${{ steps.sgs.outputs.rds_sg }}" \
-            --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp,UserIdGroupPairs[*].GroupId]' \
-            --output table
+            --query 'SecurityGroups[0].IpPermissions' \
+            --output json 2>&1 || echo "(no inbound rules or read failed)"
