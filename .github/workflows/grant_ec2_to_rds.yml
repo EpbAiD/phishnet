@@ -1,0 +1,91 @@
+name: One-shot — allow EC2 daemon to talk to RDS
+
+# WHAT THIS DOES:
+#   1. Looks up the EC2 daemon instance's security group.
+#   2. Looks up the RDS instance's security group.
+#   3. Adds an SG-to-SG inbound rule on port 5432 so anything in the EC2
+#      daemon's SG can reach RDS. This is the correct pattern for
+#      long-lived intra-VPC service access — no IP tracking, no cleanup.
+#
+# WHY:
+#   The daemon's Postgres upserts started failing with 'connection to
+#   phishnet-db... port 5432 failed: timeout expired'. The RDS security
+#   group was never opened to the daemon's SG — only to whichever IPs
+#   the API deploy uses. This fixes that permanently.
+#
+# WHEN TO RUN:
+#   Once. Idempotent — safe to re-run (authorize returns 'already exists'
+#   which we swallow).
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  EC2_INSTANCE_ID: i-0340d8051273ce3d5
+  DB_INSTANCE_ID: phishnet-db
+
+jobs:
+  grant:
+    name: Grant EC2 daemon SG access to RDS SG
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Discover SGs
+        id: sgs
+        run: |
+          set -euo pipefail
+
+          EC2_SG=$(aws ec2 describe-instances \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+            --output text)
+          echo "EC2 daemon SG: $EC2_SG"
+
+          RDS_SG=$(aws rds describe-db-instances \
+            --db-instance-identifier "$DB_INSTANCE_ID" \
+            --query 'DBInstances[0].VpcSecurityGroups[0].VpcSecurityGroupId' \
+            --output text)
+          echo "RDS SG:        $RDS_SG"
+
+          echo "ec2_sg=$EC2_SG" >> "$GITHUB_OUTPUT"
+          echo "rds_sg=$RDS_SG" >> "$GITHUB_OUTPUT"
+
+      - name: Show current RDS SG inbound rules
+        run: |
+          aws ec2 describe-security-groups \
+            --group-ids "${{ steps.sgs.outputs.rds_sg }}" \
+            --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp,UserIdGroupPairs[*].GroupId]' \
+            --output table
+
+      - name: Authorize EC2 SG on port 5432 of RDS SG
+        run: |
+          # SG-to-SG rule: "anything in $EC2_SG may hit port 5432 of $RDS_SG"
+          # Duplicate rule is fine — swallow InvalidPermission.Duplicate.
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${{ steps.sgs.outputs.rds_sg }}" \
+            --ip-permissions "IpProtocol=tcp,FromPort=5432,ToPort=5432,UserIdGroupPairs=[{GroupId=${{ steps.sgs.outputs.ec2_sg }},Description=phishnet-daemon}]" \
+            2>&1 | tee /tmp/authz.out || true
+          if grep -q "InvalidPermission.Duplicate" /tmp/authz.out; then
+            echo "✅ Rule already exists — nothing to do."
+          elif grep -q "GroupId" /tmp/authz.out; then
+            echo "✅ Rule added."
+          else
+            echo "❌ Unexpected output — check above."
+            exit 1
+          fi
+
+      - name: Show RDS SG inbound rules AFTER
+        run: |
+          aws ec2 describe-security-groups \
+            --group-ids "${{ steps.sgs.outputs.rds_sg }}" \
+            --query 'SecurityGroups[0].IpPermissions[*].[FromPort,ToPort,IpRanges[*].CidrIp,UserIdGroupPairs[*].GroupId]' \
+            --output table
