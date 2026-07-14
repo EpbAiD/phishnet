@@ -85,7 +85,38 @@ def _upsert(
         f"ON CONFLICT ({key_col}) DO UPDATE SET {update_set}, updated_at = NOW()"
     )
 
-    rows = list(_rows_from_df(df, columns))
+    # Drop rows where the PK would be NULL, and dedupe by PK within the
+    # batch (last write wins). Two failure modes if we don't do this:
+    #   1. Row with null PK → NotNullViolation, whole batch rolled back.
+    #   2. Two rows with the same PK in ONE INSERT → 'ON CONFLICT DO UPDATE
+    #      command cannot affect row a second time' → whole batch rolled back.
+    # In practice ~1 row/batch has null PK, and DNS batches often have a
+    # handful of same-domain dupes (multiple URLs on shared hosting).
+    key_idx = columns.index(key_col)
+    all_rows = list(_rows_from_df(df, columns))
+    by_key: dict = {}
+    null_dropped = 0
+    for r in all_rows:
+        k = r[key_idx]
+        if k is None or k == "":
+            null_dropped += 1
+            continue
+        by_key[k] = r  # last write wins
+    rows = list(by_key.values())
+    dupe_dropped = len(all_rows) - null_dropped - len(rows)
+    if null_dropped:
+        print(
+            f"[db_upsert] {table}: dropped {null_dropped} rows with null/empty {key_col}",
+            flush=True,
+        )
+    if dupe_dropped:
+        print(
+            f"[db_upsert] {table}: deduped by {key_col} ({dupe_dropped} dupes, kept last)",
+            flush=True,
+        )
+    if not rows:
+        return 0
+
     with conn.cursor() as cur:
         execute_values(cur, sql, rows, page_size=_INSERT_PAGE)
     conn.commit()
