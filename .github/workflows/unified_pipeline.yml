@@ -357,28 +357,62 @@ jobs:
             sleep "$POLL_SEC"
           done
 
-      - name: Verify masters were freshly updated in S3
+      - name: Whitelist runner in RDS SG (for freshness verify)
+        uses: ./.github/actions/rds-access
+        with:
+          db_instance_id: phishnet-db
+          aws_region: ${{ env.AWS_REGION }}
+
+      - name: Verify Postgres tables were freshly updated
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          # Defense-in-depth: even if done.json said ok, check the master
-          # objects themselves were touched recently. Catches a bug where the
-          # daemon writes done.json but fails silently at the accumulation step.
-          echo "Verifying S3 masters were updated recently..."
-          THRESHOLD_MIN=360
-          for master in dns_features_master.csv whois_features_master.csv url_features_master.csv; do
-            LAST_MODIFIED=$(aws s3api head-object \
-              --bucket ${{ env.S3_BUCKET }} \
-              --key "master/${master}" \
-              --query 'LastModified' --output text)
-            LAST_EPOCH=$(date -d "$LAST_MODIFIED" +%s)
-            NOW_EPOCH=$(date +%s)
-            AGE_MIN=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
-            echo "  ${master}: last modified ${AGE_MIN} min ago"
-            if [ "$AGE_MIN" -gt "$THRESHOLD_MIN" ]; then
-              echo "❌ ${master} not updated in the last ${THRESHOLD_MIN} min — accumulation likely failed."
-              exit 1
-            fi
-          done
-          echo "✅ Masters updated recently."
+          # Defense-in-depth: even if done.json said ok, verify the daemon's
+          # upserts actually landed in Postgres by checking max(updated_at)
+          # is recent. Catches silent failure modes (network issue between
+          # done marker write and DB commit, etc).
+          #
+          # NOTE: the S3 CSV masters check that used to live here is gone.
+          # The daemon no longer writes those files — Postgres is the
+          # source of truth. Old S3 masters are stale by design.
+          pip install psycopg2-binary >/dev/null 2>&1
+          python - <<'PY'
+          import os, sys, psycopg2
+          from datetime import datetime, timezone
+
+          THRESHOLD_MIN = 360
+          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+          bad = []
+          with conn.cursor() as cur:
+              for table in ("url_features", "dns_features", "whois_features"):
+                  cur.execute(f"SELECT MAX(updated_at) FROM {table}")
+                  (last,) = cur.fetchone()
+                  if last is None:
+                      bad.append(f"{table}: no rows at all")
+                      continue
+                  age_min = (datetime.now(timezone.utc) - last).total_seconds() / 60
+                  status = "✅" if age_min <= THRESHOLD_MIN else "❌"
+                  print(f"  {status} {table}: max(updated_at) = {age_min:.1f} min ago")
+                  if age_min > THRESHOLD_MIN:
+                      bad.append(f"{table}: {age_min:.0f} min stale (> {THRESHOLD_MIN} threshold)")
+          conn.close()
+          if bad:
+              print("❌ Postgres freshness check failed:")
+              for b in bad:
+                  print(f"    - {b}")
+              sys.exit(1)
+          print("✅ All Postgres tables updated within threshold.")
+          PY
+
+      - name: Revoke RDS access (freshness verify)
+        if: always() && env.RDS_TMP_SG_ID != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$RDS_TMP_SG_ID" \
+            --protocol tcp --port 5432 \
+            --cidr "$RDS_TMP_RUNNER_IP/32" \
+            --region "$RDS_TMP_AWS_REGION" \
+            2>&1 | grep -v "does not exist" || true
 
       # Note: we no longer stop EC2 here. The daemon does that itself after
       # IDLE_SHUTDOWN_MIN minutes of empty queue. This means EC2 stays up
@@ -446,10 +480,21 @@ jobs:
           import csv, os, psycopg2
           conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
           out = "data/processed/phishing_features_complete.csv"
+
+          # Get column names via a regular (client-side) cursor. On named
+          # cursors, .description is None until the first fetch, so a
+          # naive [d[0] for d in cur.description] blows up with TypeError.
+          with conn.cursor() as cur:
+              cur.execute(
+                  "SELECT column_name FROM information_schema.columns "
+                  "WHERE table_name = 'phishing_features' ORDER BY ordinal_position"
+              )
+              colnames = [r[0] for r in cur.fetchall()]
+
+          # Then stream the actual rows via a server-side cursor.
           with conn.cursor(name="training_export") as cur:
               cur.itersize = 10_000
-              cur.execute("SELECT * FROM phishing_features")
-              colnames = [d[0] for d in cur.description]
+              cur.execute(f"SELECT {', '.join(colnames)} FROM phishing_features")
               with open(out, "w", encoding="utf-8", newline="") as f:
                   w = csv.writer(f)
                   w.writerow(colnames)
