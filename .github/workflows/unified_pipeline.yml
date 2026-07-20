@@ -604,29 +604,51 @@ jobs:
       - name: Train WHOIS model
         run: python3 scripts/train_whois_model.py
 
-      - name: Commit trained models
+      - name: Sync .pkl models to S3
+        run: |
+          # Model .pkl files can exceed GitHub's 100 MB per-file limit
+          # (dns_rf.pkl was 109 MB on 2026-07-19 and killed the pipeline).
+          # Blobs live in S3; only small metadata JSON is tracked in git.
+          if [ -d models ] && [ -n "$(ls -A models/ 2>/dev/null)" ]; then
+            aws s3 sync models/ s3://${{ env.S3_BUCKET }}/models/ \
+              --exclude "*" --include "*.pkl" --include "*.json"
+            echo "✅ Synced models/ to s3://${{ env.S3_BUCKET }}/models/"
+          else
+            echo "No models/ dir or empty — skipping sync"
+          fi
+
+      - name: Commit metadata JSON only
         run: |
           git config user.name "EpbAiD"
           git config user.email "eeshanpbhanap@gmail.com"
 
-          git add models/
+          # Only stage the small metadata files that belong in git. Do NOT
+          # `git add models/` — that stages every .pkl, and >100 MB blobs
+          # get rejected by GitHub's push size limit.
+          META_TARGETS=()
+          for f in models/production_metadata.json models/deployed_metadata.json; do
+            if [ -f "$f" ]; then
+              cp "$f" ".github/$(basename $f)"
+              META_TARGETS+=(".github/$(basename $f)")
+            fi
+          done
+          if [ ${#META_TARGETS[@]} -eq 0 ]; then
+            echo "No metadata files to commit"
+            exit 0
+          fi
+          git add "${META_TARGETS[@]}"
 
           if git diff --staged --quiet; then
-            echo "No model changes to commit"
+            echo "No metadata changes to commit"
             exit 0
           fi
 
           MODE="${{ needs.load-config.outputs.mode }}"
           ROWS=$(wc -l < data/processed/phishing_features_complete.csv)
-
-          git commit -m "[$MODE] Train models on $ROWS URLs
-
-          - URL models: 15 algorithms
-          - DNS models: 15 algorithms
-          - WHOIS models: 15 algorithms
-          - Total: 45 models updated"
-
-          git push
+          git commit -m "[$MODE] Train models on $ROWS URLs" || echo "Nothing to commit"
+          # Don't fail the whole job if the push has trouble — daily_retrain
+          # writes the same metadata daily, so a missed commit is not fatal.
+          git push origin main || echo "Push failed — will retry next run"
 
   # ========================================================================
   # JOB 4: Update Validation Counter
