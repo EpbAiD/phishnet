@@ -1,45 +1,5 @@
 {
   "url_model": "catboost",
   "dns_model": "catboost",
-  "whois_model": "catboost",
-  "ensemble": {
-    "selected_at": "2026-07-06T16:58:18.044216",
-    "models": {
-      "url": "catboost",
-      "dns": "lightgbm",
-      "whois": "xgboost"
-    },
-    "weight_strategy": "scipy_optimized_log_loss",
-    "weights": {
-      "url": 0.6808161588879512,
-      "dns": 0.1841689793674032,
-      "whois": 0.1350148617446456
-    },
-    "cv_performance": {
-      "url_roc_auc": 0.9738628837520548,
-      "dns_roc_auc": 0.9210039315889617,
-      "whois_roc_auc": 0.9366929475992756,
-      "ensemble_roc_auc": 0.9586098592224478,
-      "ensemble_accuracy": 0.0,
-      "ensemble_f1": 0.0
-    },
-    "latency": {
-      "url_ms": 1.0919542100020863,
-      "dns_ms": 0.7749654299982467,
-      "whois_ms": 1.7815530000075341,
-      "total_mean_ms": 3.648472640007867,
-      "total_p95_ms": 6.63766779996422
-    },
-    "tradeoff_score": 0.9575153174304454
-  },
-  "last_trained": "2026-07-06T16:58:20.186935",
-  "training_run": "28808187887",
-  "golden_test": {
-    "model": "url_xgboost",
-    "overall_accuracy": 0.9868,
-    "safe_url_accuracy": 0.9802,
-    "false_positive_rate": 0.0198,
-    "phishing_detection_rate": 1.0,
-    "auc": 1.0
-  }
+  "whois_model": "catboost"
 }
