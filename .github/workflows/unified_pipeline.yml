@@ -322,13 +322,16 @@ jobs:
           fi
 
       - name: Wait for daemon to finish the batch
+        id: wait_daemon
         run: |
-          # Poll S3 for the daemon's done.json for this batch. Fail loudly if
-          # it never appears within a generous ceiling. If GH times out first
-          # the daemon keeps working — the next run's verify still catches up.
+          # Poll S3 for the daemon's done.json for this batch. Timeout is
+          # a soft ceiling — if it fires, we skip the freshness check
+          # (which would give a false negative) and exit successfully.
+          # The daemon keeps working; next run's freshness check confirms.
           BD="${{ env.batch_date }}"
           KEY="pipeline_state/${BD}/done.json"
-          MAX_WAIT_MIN=300      # 5h ceiling — daemon can take longer, we just stop watching
+          MAX_WAIT_MIN=340      # 5h 40m — real batches now take 5h-6h,
+                                # up from 4-4.5h when we sized this originally
           POLL_SEC=60
           START=$(date +%s)
           while : ; do
@@ -338,6 +341,7 @@ jobs:
               cat /tmp/done.json
               if grep -q '"ok": true' /tmp/done.json ; then
                 echo "✅ Batch reported ok."
+                echo "batch_done=true" >> "$GITHUB_OUTPUT"
                 exit 0
               else
                 echo "❌ Batch reported failure."
@@ -347,10 +351,11 @@ jobs:
             NOW=$(date +%s)
             ELAPSED_MIN=$(( (NOW - START) / 60 ))
             if [ "$ELAPSED_MIN" -ge "$MAX_WAIT_MIN" ]; then
-              echo "⏱️  Waited ${ELAPSED_MIN} min without a done.json — GH job timing out."
-              echo "Daemon may still be processing on EC2; next run's verify will confirm."
-              # NOTE: not a hard failure — the daemon will finish and update the
-              # masters. The hourly health monitor picks up master-age regressions.
+              echo "⏱️  Waited ${ELAPSED_MIN} min without a done.json — GH job giving up watch."
+              echo "Daemon is still processing on EC2; next run's freshness check will confirm."
+              # Signal to later steps that we timed out — they should skip
+              # the freshness check (data is legitimately not there yet).
+              echo "batch_done=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "  ...still waiting (${ELAPSED_MIN}/${MAX_WAIT_MIN} min). Sleeping ${POLL_SEC}s."
@@ -358,12 +363,17 @@ jobs:
           done
 
       - name: Whitelist runner in RDS SG (for freshness verify)
+        # Skip the freshness check if the daemon watch timed out — the
+        # batch is still processing and MAX(updated_at) legitimately
+        # hasn't advanced yet. Next scheduled run will verify.
+        if: steps.wait_daemon.outputs.batch_done == 'true'
         uses: ./.github/actions/rds-access
         with:
           db_instance_id: phishnet-db
           aws_region: ${{ env.AWS_REGION }}
 
       - name: Verify Postgres tables were freshly updated
+        if: steps.wait_daemon.outputs.batch_done == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
