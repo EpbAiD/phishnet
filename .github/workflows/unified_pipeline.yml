@@ -143,7 +143,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: load-config
     if: needs.load-config.outputs.should_run_data == 'true'
-    timeout-minutes: 350  # 5h50m — under the 6h GH Actions hard cap, headroom for a 3K-URL EC2 extraction (~5h) plus fetch/setup overhead
+    timeout-minutes: 30   # publish-only now; the daemon runs async on EC2
+                          # so the job just needs time for URL fetch + publish.
 
     steps:
       - name: Checkout code
@@ -217,6 +218,47 @@ jobs:
                       n += 1
                   print(f"Exported {n} rows to {out}")
           conn.close()
+          PY
+
+      - name: Verify Postgres freshness (from previous pipeline's daemon run)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Reused SG rule from the balance-check whitelist above. Checks
+          # that the daemon has landed data in the past 24h. This replaces
+          # the old "wait for THIS batch's done.json" step, which routinely
+          # burned the whole 6h GH job cap because extractions now take
+          # 5-6h+ and don't fit inside one job.
+          #
+          # The current batch's outcome will be verified by the NEXT
+          # scheduled pipeline run (~12h from now). If the daemon is
+          # broken, we'll notice within a day.
+          python - <<'PY'
+          import os, sys, psycopg2
+          from datetime import datetime, timezone
+
+          THRESHOLD_HOURS = 24
+          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
+          stale = []
+          with conn.cursor() as cur:
+              for table in ("url_features", "dns_features", "whois_features"):
+                  cur.execute(f"SELECT MAX(updated_at) FROM {table}")
+                  (last,) = cur.fetchone()
+                  if last is None:
+                      stale.append(f"{table}: no rows at all")
+                      continue
+                  age_h = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+                  status = "✅" if age_h <= THRESHOLD_HOURS else "❌"
+                  print(f"  {status} {table}: max(updated_at) = {age_h:.1f}h ago")
+                  if age_h > THRESHOLD_HOURS:
+                      stale.append(f"{table}: {age_h:.1f}h stale (>{THRESHOLD_HOURS}h threshold)")
+          conn.close()
+          if stale:
+              print("\n❌ Postgres freshness check failed — daemon may be stuck:")
+              for s in stale:
+                  print(f"    - {s}")
+              sys.exit(1)
+          print(f"\n✅ All Postgres tables updated within {THRESHOLD_HOURS}h.")
           PY
 
       - name: Revoke RDS access (balance check)
@@ -321,108 +363,12 @@ jobs:
             echo "EC2 already running."
           fi
 
-      - name: Wait for daemon to finish the batch
-        id: wait_daemon
-        run: |
-          # Poll S3 for the daemon's done.json for this batch. Timeout is
-          # a soft ceiling — if it fires, we skip the freshness check
-          # (which would give a false negative) and exit successfully.
-          # The daemon keeps working; next run's freshness check confirms.
-          BD="${{ env.batch_date }}"
-          KEY="pipeline_state/${BD}/done.json"
-          MAX_WAIT_MIN=340      # 5h 40m — real batches now take 5h-6h,
-                                # up from 4-4.5h when we sized this originally
-          POLL_SEC=60
-          START=$(date +%s)
-          while : ; do
-            if aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key "$KEY" >/dev/null 2>&1 ; then
-              echo "Daemon signaled done for batch ${BD}. Fetching done.json..."
-              aws s3 cp "s3://${{ env.S3_BUCKET }}/$KEY" /tmp/done.json
-              cat /tmp/done.json
-              if grep -q '"ok": true' /tmp/done.json ; then
-                echo "✅ Batch reported ok."
-                echo "batch_done=true" >> "$GITHUB_OUTPUT"
-                exit 0
-              else
-                echo "❌ Batch reported failure."
-                exit 1
-              fi
-            fi
-            NOW=$(date +%s)
-            ELAPSED_MIN=$(( (NOW - START) / 60 ))
-            if [ "$ELAPSED_MIN" -ge "$MAX_WAIT_MIN" ]; then
-              echo "⏱️  Waited ${ELAPSED_MIN} min without a done.json — GH job giving up watch."
-              echo "Daemon is still processing on EC2; next run's freshness check will confirm."
-              # Signal to later steps that we timed out — they should skip
-              # the freshness check (data is legitimately not there yet).
-              echo "batch_done=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "  ...still waiting (${ELAPSED_MIN}/${MAX_WAIT_MIN} min). Sleeping ${POLL_SEC}s."
-            sleep "$POLL_SEC"
-          done
-
-      - name: Whitelist runner in RDS SG (for freshness verify)
-        # Skip the freshness check if the daemon watch timed out — the
-        # batch is still processing and MAX(updated_at) legitimately
-        # hasn't advanced yet. Next scheduled run will verify.
-        if: steps.wait_daemon.outputs.batch_done == 'true'
-        uses: ./.github/actions/rds-access
-        with:
-          db_instance_id: phishnet-db
-          aws_region: ${{ env.AWS_REGION }}
-
-      - name: Verify Postgres tables were freshly updated
-        if: steps.wait_daemon.outputs.batch_done == 'true'
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          # Defense-in-depth: even if done.json said ok, verify the daemon's
-          # upserts actually landed in Postgres by checking max(updated_at)
-          # is recent. Catches silent failure modes (network issue between
-          # done marker write and DB commit, etc).
-          #
-          # NOTE: the S3 CSV masters check that used to live here is gone.
-          # The daemon no longer writes those files — Postgres is the
-          # source of truth. Old S3 masters are stale by design.
-          pip install psycopg2-binary >/dev/null 2>&1
-          python - <<'PY'
-          import os, sys, psycopg2
-          from datetime import datetime, timezone
-
-          THRESHOLD_MIN = 360
-          conn = psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15)
-          bad = []
-          with conn.cursor() as cur:
-              for table in ("url_features", "dns_features", "whois_features"):
-                  cur.execute(f"SELECT MAX(updated_at) FROM {table}")
-                  (last,) = cur.fetchone()
-                  if last is None:
-                      bad.append(f"{table}: no rows at all")
-                      continue
-                  age_min = (datetime.now(timezone.utc) - last).total_seconds() / 60
-                  status = "✅" if age_min <= THRESHOLD_MIN else "❌"
-                  print(f"  {status} {table}: max(updated_at) = {age_min:.1f} min ago")
-                  if age_min > THRESHOLD_MIN:
-                      bad.append(f"{table}: {age_min:.0f} min stale (> {THRESHOLD_MIN} threshold)")
-          conn.close()
-          if bad:
-              print("❌ Postgres freshness check failed:")
-              for b in bad:
-                  print(f"    - {b}")
-              sys.exit(1)
-          print("✅ All Postgres tables updated within threshold.")
-          PY
-
-      - name: Revoke RDS access (freshness verify)
-        if: always() && env.RDS_TMP_SG_ID != ''
-        run: |
-          aws ec2 revoke-security-group-ingress \
-            --group-id "$RDS_TMP_SG_ID" \
-            --protocol tcp --port 5432 \
-            --cidr "$RDS_TMP_RUNNER_IP/32" \
-            --region "$RDS_TMP_AWS_REGION" \
-            2>&1 | grep -v "does not exist" || true
+      # Note: this job used to wait for the daemon to finish the batch
+      # (polling done.json for up to 5h 40m). That routinely hit GitHub's
+      # 6h job cap and got cancelled. The wait added no value — the
+      # daemon is autonomous, and freshness of PREVIOUS runs is checked
+      # at the top of every pipeline (see the earlier freshness step).
+      # If a batch fails silently, next run catches it within 24h.
 
       # Note: we no longer stop EC2 here. The daemon does that itself after
       # IDLE_SHUTDOWN_MIN minutes of empty queue. This means EC2 stays up

@@ -113,17 +113,21 @@ def _copy_csv_from_s3(conn, table: str, s3_key: str, pk_col: str) -> int:
                     f"PK column '{pk_col}' not in CSV header for {table}: {columns}"
                 )
             pk_idx = columns.index(pk_col)
+            # Same btree size guard as db_upsert.py — see note there.
+            MAX_INDEXED_STR = 2000
             last_line_for_pk: dict[str, int] = {}
             total_seen = 0
             null_pk_skipped = 0
+            oversized_skipped = 0
             for i, row in enumerate(reader):
                 if len(row) <= pk_idx:
                     continue  # short row, skip
                 pk_val = row[pk_idx]
                 if pk_val == "":
-                    # Row has no PK — old extraction failure. Can't insert with
-                    # NULL PK (not-null constraint) and can't dedupe it. Drop.
                     null_pk_skipped += 1
+                    continue
+                if len(pk_val.encode("utf-8")) > MAX_INDEXED_STR:
+                    oversized_skipped += 1
                     continue
                 last_line_for_pk[pk_val] = i
                 total_seen += 1
@@ -131,6 +135,12 @@ def _copy_csv_from_s3(conn, table: str, s3_key: str, pk_col: str) -> int:
                 print(
                     f"[migrate]   dropped {null_pk_skipped} rows with empty "
                     f"{pk_col} (unusable, old extraction failures)",
+                    flush=True,
+                )
+            if oversized_skipped:
+                print(
+                    f"[migrate]   dropped {oversized_skipped} rows with "
+                    f"{pk_col} > {MAX_INDEXED_STR} bytes (btree size limit)",
                     flush=True,
                 )
 

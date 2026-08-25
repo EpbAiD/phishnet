@@ -85,28 +85,52 @@ def _upsert(
         f"ON CONFLICT ({key_col}) DO UPDATE SET {update_set}, updated_at = NOW()"
     )
 
-    # Drop rows where the PK would be NULL, and dedupe by PK within the
-    # batch (last write wins). Two failure modes if we don't do this:
+    # Drop rows where the PK would be NULL, dedupe by PK within the batch
+    # (last write wins), AND drop rows where the PK is longer than the btree
+    # index can hold. Four failure modes we're guarding against:
     #   1. Row with null PK → NotNullViolation, whole batch rolled back.
     #   2. Two rows with the same PK in ONE INSERT → 'ON CONFLICT DO UPDATE
     #      command cannot affect row a second time' → whole batch rolled back.
-    # In practice ~1 row/batch has null PK, and DNS batches often have a
-    # handful of same-domain dupes (multiple URLs on shared hosting).
+    #   3. PK longer than ~8 KB → ProgramLimitExceeded from btree page limit
+    #      ('index row requires 13216 bytes, maximum size is 8191'). Once per
+    #      ~thousand batches we get a garbage URL that's tens of KB long.
+    #   4. Non-PK 'url' column in DNS table also has a btree index — same limit.
+    # In practice ~1 row/batch has null PK, DNS batches often have same-domain
+    # dupes (shared hosting), and oversized-URL rows come from adversarial
+    # phishing kits with junk-padded querystrings.
+    MAX_INDEXED_STR = 2000  # bytes. Standard URL length ceiling. Any real URL
+                            # fits well under this; anything longer is garbage.
     key_idx = columns.index(key_col)
+    url_idx = columns.index("url") if "url" in columns and key_col != "url" else None
     all_rows = list(_rows_from_df(df, columns))
     by_key: dict = {}
     null_dropped = 0
+    oversized_dropped = 0
     for r in all_rows:
         k = r[key_idx]
         if k is None or k == "":
             null_dropped += 1
             continue
+        if isinstance(k, str) and len(k.encode("utf-8")) > MAX_INDEXED_STR:
+            oversized_dropped += 1
+            continue
+        # Also guard the non-PK url column (indexed on dns_features)
+        if url_idx is not None:
+            u = r[url_idx]
+            if isinstance(u, str) and len(u.encode("utf-8")) > MAX_INDEXED_STR:
+                oversized_dropped += 1
+                continue
         by_key[k] = r  # last write wins
     rows = list(by_key.values())
-    dupe_dropped = len(all_rows) - null_dropped - len(rows)
+    dupe_dropped = len(all_rows) - null_dropped - oversized_dropped - len(rows)
     if null_dropped:
         print(
             f"[db_upsert] {table}: dropped {null_dropped} rows with null/empty {key_col}",
+            flush=True,
+        )
+    if oversized_dropped:
+        print(
+            f"[db_upsert] {table}: dropped {oversized_dropped} rows with url/{key_col} > {MAX_INDEXED_STR} bytes",
             flush=True,
         )
     if dupe_dropped:
